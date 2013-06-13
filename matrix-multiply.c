@@ -349,21 +349,25 @@ int main(int argc, char** argv) {
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &node_count);
 
+  int exit_code = EXIT_SUCCESS;
+
   if(node_count > ROWS) {
     fprintf(stderr, "Number of nodes is greater than row count: %d > %d", node_count, ROWS);
-    return EXIT_FAILURE;
+    exit_code = EXIT_FAILURE;
+    goto cleanup; // TODO: Is this a valid programming pattern at ZDV?
   }
-  
+ 
   if(my_rank == 0) {
     run_master();
   } else {
     run_slave();
   }
 
+ cleanup:
   MPI_Barrier(MPI_COMM_WORLD);
   MPI_Finalize();
 
   free_memory();
 
-  return EXIT_SUCCESS;
+  return exit_code;
 }
