@@ -9,8 +9,8 @@
 
 #define MATRICES 4
 // Size of the matrices
-#define ROWS 32
-#define COLS 32
+#define ROWS 300
+#define COLS 300
 
 // Size of each individual matrices in case we ever allow non-square matrices.
 int rows[4] = { ROWS, ROWS, ROWS, ROWS } ;
@@ -47,6 +47,10 @@ int matrices[MATRICES][ROWS][COLS];
 MPI_Request row_sends[ROWS];
 int row_sends_index = 0;
 
+// For each async send of a row a buffer is added. Async sends both happen on master hand slaves
+int* row_send_buffers[ROWS];
+int row_send_buffers_index = 0;
+
 // For each async receive of a row on the master a request is added. There are no async receives on the slaves.
 MPI_Request row_receives[ROWS];
 int row_receives_index = 0;
@@ -59,6 +63,10 @@ int row_receive_buffers_index = 0;
 MPI_Request matrix_sends[ROWS]; // The maximal number of nodes which we can distribute the computation to is equal to the number of nodes.
 int matrix_sends_index = 0;
 
+// For each async send of a matrix on the master a buffer is added. There are no async sends on the slaves.
+int* matrix_send_buffers[ROWS]; // The maximal number of nodes which we can distribute the computation to is equal to the number of nodes.
+int matrix_send_buffers_index = 0;
+
 /**
  * Each message we send between nodes is tagged with one of these types.
  */
@@ -66,6 +74,20 @@ enum MESSAGETYPES {
   MESSAGETYPE_ROW,
   MESSAGETYPE_MATRIX
 };
+
+void free_memory() {
+  while(row_send_buffers_index > 0) {
+    --row_send_buffers_index;
+    free(row_send_buffers[row_send_buffers_index]);
+    row_send_buffers[row_send_buffers_index] = 0;
+  }
+
+  while(matrix_send_buffers_index > 0) {
+    --matrix_send_buffers_index;
+    free(matrix_send_buffers[matrix_send_buffers_index]);
+    matrix_send_buffers[matrix_send_buffers_index] = 0;
+  }
+}
 
 void async_send_row(int matrix, int row, int rank) {
   fprintf(stderr, "%d: async_send_row(matrix=%d, row=%d, to=%d)\n", my_rank, matrix, row, rank);
@@ -77,15 +99,16 @@ void async_send_row(int matrix, int row, int rank) {
   int buffer_size;
   MPI_Pack_size(1 + 1 + cols[matrix], MPI_INT, MPI_COMM_WORLD, &buffer_size);
 
-  char buffer[buffer_size];
+  assert(row_send_buffers_index < ARRAY_SIZE(row_send_buffers));
+  int* buffer = row_send_buffers[row_send_buffers_index++] = malloc(buffer_size);
   int position = 0;
 
-  MPI_Pack(&matrix, 1, MPI_INT, &buffer, buffer_size, &position, MPI_COMM_WORLD);
-  MPI_Pack(&row, 1, MPI_INT, &buffer, buffer_size, &position, MPI_COMM_WORLD);
-  MPI_Pack(&matrices[matrix][row], cols[matrix], MPI_INT, &buffer, buffer_size, &position, MPI_COMM_WORLD);
+  MPI_Pack(&matrix, 1, MPI_INT, buffer, buffer_size, &position, MPI_COMM_WORLD);
+  MPI_Pack(&row, 1, MPI_INT, buffer, buffer_size, &position, MPI_COMM_WORLD);
+  MPI_Pack(&matrices[matrix][row], cols[matrix], MPI_INT, buffer, buffer_size, &position, MPI_COMM_WORLD);
 
   assert(row_sends_index < ARRAY_SIZE(row_sends));
-  MPI_Isend(&buffer, position, MPI_PACKED, rank, MESSAGETYPE_ROW, MPI_COMM_WORLD, &row_sends[row_sends_index++]);
+  MPI_Isend(buffer, position, MPI_PACKED, rank, MESSAGETYPE_ROW, MPI_COMM_WORLD, &row_sends[row_sends_index++]);
 }
 
 int sync_receive_row() {
@@ -153,14 +176,15 @@ void async_send_matrix(int matrix, int rank) {
   int buffer_size;
   MPI_Pack_size(1 + rows[matrix] * cols[matrix], MPI_INT, MPI_COMM_WORLD, &buffer_size);
 
-  char buffer[buffer_size];
+  assert(matrix_send_buffers_index < ARRAY_SIZE(matrix_send_buffers));
+  int* buffer = matrix_send_buffers[matrix_send_buffers_index++] = malloc(buffer_size);
   int position = 0;
 
-  MPI_Pack(&matrix, 1, MPI_INT, &buffer, buffer_size, &position, MPI_COMM_WORLD);
-  MPI_Pack(&matrices[matrix], rows[matrix] * cols[matrix], MPI_INT, &buffer, buffer_size, &position, MPI_COMM_WORLD);
+  MPI_Pack(&matrix, 1, MPI_INT, buffer, buffer_size, &position, MPI_COMM_WORLD);
+  MPI_Pack(&matrices[matrix], rows[matrix] * cols[matrix], MPI_INT, buffer, buffer_size, &position, MPI_COMM_WORLD);
 
   assert(matrix_sends_index < ARRAY_SIZE(matrix_sends));
-  MPI_Isend(&buffer, position, MPI_PACKED, rank, MESSAGETYPE_MATRIX, MPI_COMM_WORLD, &matrix_sends[matrix_sends_index++]);
+  MPI_Isend(buffer, position, MPI_PACKED, rank, MESSAGETYPE_MATRIX, MPI_COMM_WORLD, &matrix_sends[matrix_sends_index++]);
 }
 
 void sync_receive_matrix() {
@@ -338,6 +362,8 @@ int main(int argc, char** argv) {
 
   MPI_Barrier(MPI_COMM_WORLD);
   MPI_Finalize();
+
+  free_memory();
 
   return EXIT_SUCCESS;
 }
