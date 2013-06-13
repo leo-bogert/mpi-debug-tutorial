@@ -5,7 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
 
+#define MATRICES 4
 // Size of the matrices
 #define ROWS 32
 #define COLS 32
@@ -39,7 +41,7 @@ int my_rank = -1;
  *
  * @see http://en.wikipedia.org/wiki/Row-major_order
  */
-int matrices[4][ROWS][COLS];
+int matrices[MATRICES][ROWS][COLS];
 
 // For each async send of a row a request is added. Async sends both happen on master and slaves.
 MPI_Request row_sends[ROWS];
@@ -68,6 +70,10 @@ enum MESSAGETYPES {
 void async_send_row(int matrix, int row, int rank) {
   fprintf(stderr, "%d: async_send_row(matrix=%d, row=%d, to=%d)\n", my_rank, matrix, row, rank);
 
+  assert(matrix < MATRICES);
+  assert(row < rows[matrix]);
+  assert(rank < node_count);
+
   int buffer_size;
   MPI_Pack_size(1 + 1 + cols[matrix], MPI_INT, MPI_COMM_WORLD, &buffer_size);
 
@@ -78,6 +84,7 @@ void async_send_row(int matrix, int row, int rank) {
   MPI_Pack(&row, 1, MPI_INT, &buffer, buffer_size, &position, MPI_COMM_WORLD);
   MPI_Pack(&matrices[matrix][row], cols[matrix], MPI_INT, &buffer, buffer_size, &position, MPI_COMM_WORLD);
 
+  assert(row_sends_index < ARRAY_SIZE(row_sends));
   MPI_Isend(&buffer, position, MPI_PACKED, rank, MESSAGETYPE_ROW, MPI_COMM_WORLD, &row_sends[row_sends_index++]);
 }
 
@@ -96,9 +103,11 @@ int sync_receive_row() {
 
   int matrix;
   MPI_Unpack(&buffer, buffer_size, &buffer_position, &matrix, 1, MPI_INT, MPI_COMM_WORLD);
+  assert(matrix < MATRICES);
 
   int row;
   MPI_Unpack(&buffer, buffer_size, &buffer_position, &row, 1, MPI_INT, MPI_COMM_WORLD);
+  assert(row < rows[matrix]);
 
   MPI_Unpack(&buffer, buffer_size, &buffer_position, &matrices[matrix][row], cols[matrix], MPI_INT, MPI_COMM_WORLD);
 
@@ -109,9 +118,13 @@ int sync_receive_row() {
 
 void async_receive_row(int rank) {
   fprintf(stderr, "%d: async_receive_row(rank=%d)\n", my_rank, rank);
+  assert(rank < node_count);
 
-  int buffer_size = 1 + 1 + cols[2];
+  int buffer_size = ARRAY_SIZE(row_receive_buffers[row_receive_buffers_index]);
 
+  assert(row_receive_buffers_index < ARRAY_SIZE(row_receive_buffers));
+  assert(row_receives_index < ARRAY_SIZE(row_receives));
+  assert(row_receive_buffers_index == row_receives_index);
   MPI_Irecv(&row_receive_buffers[row_receive_buffers_index++], buffer_size, MPI_INT, rank, MESSAGETYPE_ROW, MPI_COMM_WORLD, &row_receives[row_receives_index++]);
 }
 
@@ -124,13 +137,18 @@ void wait_for_async_receives() {
     int matrix = row_receive_buffers[i][0];
     int row = row_receive_buffers[i][1];
     assert(matrix == 2);
+    assert(row < rows[matrix]);
+
     fprintf(stderr,"%d: wait_for_async_receives(): Copying row %d of matrix %d from receive buffer...\n", my_rank, row, matrix);
-    memcpy(&matrices[matrix][row], &row_receive_buffers[i][2], cols[matrix]*sizeof(int));
+    memcpy(&matrices[matrix][row], &row_receive_buffers[i][2], cols[matrix]*sizeof(matrices[matrix][row][0]));
   }
 }
 
 void async_send_matrix(int matrix, int rank) {
   fprintf(stderr, "%d: async_send_matrix(matrix=%d, to=%d)\n", my_rank, matrix, rank);
+
+  assert(matrix < MATRICES);
+  assert(rank < node_count);
 
   int buffer_size;
   MPI_Pack_size(1 + rows[matrix] * cols[matrix], MPI_INT, MPI_COMM_WORLD, &buffer_size);
@@ -141,6 +159,7 @@ void async_send_matrix(int matrix, int rank) {
   MPI_Pack(&matrix, 1, MPI_INT, &buffer, buffer_size, &position, MPI_COMM_WORLD);
   MPI_Pack(&matrices[matrix], rows[matrix] * cols[matrix], MPI_INT, &buffer, buffer_size, &position, MPI_COMM_WORLD);
 
+  assert(matrix_sends_index < ARRAY_SIZE(matrix_sends));
   MPI_Isend(&buffer, position, MPI_PACKED, rank, MESSAGETYPE_MATRIX, MPI_COMM_WORLD, &matrix_sends[matrix_sends_index++]);
 }
 
@@ -159,6 +178,7 @@ void sync_receive_matrix() {
 
   int matrix;
   MPI_Unpack(&buffer, buffer_size, &buffer_position, &matrix, 1, MPI_INT, MPI_COMM_WORLD);
+  assert(matrix < MATRICES);
 
   MPI_Unpack(&buffer, buffer_size, &buffer_position, &matrices[matrix], rows[matrix] * cols[matrix], MPI_INT, MPI_COMM_WORLD);
 
@@ -174,7 +194,7 @@ void generate_random_matrix(int matrix) {
 }
 
 void zero_matrix(int matrix) {
-  memset(&matrices[matrix], 0, sizeof(int) * rows[matrix] * cols[matrix]);
+  memset(&matrices[matrix], 0, sizeof(matrices[matrix][0][0]) * rows[matrix] * cols[matrix]);
 }
 
 void compute_test_matrix() {
@@ -224,6 +244,8 @@ void print_matrix(int matrix) {
 }
 
 int get_row_count_for_node(int rank) {
+  assert(rank < node_count);
+
   int rows_per_node = rows[0] / (node_count-1);
   int remainder_rows = rows[0] % (node_count-1);
   int row_count = rows_per_node;
