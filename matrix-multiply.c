@@ -79,13 +79,13 @@ void free_memory() {
   while(row_send_buffers_index > 0) {
     --row_send_buffers_index;
     free(row_send_buffers[row_send_buffers_index]);
-    row_send_buffers[row_send_buffers_index] = 0;
+    row_send_buffers[row_send_buffers_index] = NULL;
   }
 
   while(matrix_send_buffers_index > 0) {
     --matrix_send_buffers_index;
     free(matrix_send_buffers[matrix_send_buffers_index]);
-    matrix_send_buffers[matrix_send_buffers_index] = 0;
+    matrix_send_buffers[matrix_send_buffers_index] = NULL;
   }
 }
 
