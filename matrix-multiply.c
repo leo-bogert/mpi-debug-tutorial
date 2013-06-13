@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
 
@@ -210,6 +211,8 @@ void sync_receive_matrix() {
 }
 
 void generate_random_matrix(int matrix) {
+  srand(time(NULL));
+
   for(int row=0; row < rows[matrix]; ++row) {
     for(int col=0; col < cols[matrix]; ++col) {
       matrices[matrix][row][col] = rand() % 10; // WARNING: Don't use % if you want truely random numbers!
