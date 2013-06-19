@@ -123,7 +123,7 @@ int sync_receive_row() {
 
   char buffer[buffer_size];
   int buffer_position = 0;
-  MPI_Recv(&buffer, buffer_size, MPI_PACKED, MPI_ANY_SOURCE, MESSAGETYPE_ROW, MPI_COMM_WORLD, NULL);
+  MPI_Recv(&buffer, buffer_size, MPI_PACKED, MPI_ANY_SOURCE, MESSAGETYPE_ROW, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
   int matrix;
   MPI_Unpack(&buffer, buffer_size, &buffer_position, &matrix, 1, MPI_INT, MPI_COMM_WORLD);
@@ -155,7 +155,7 @@ void async_receive_row(int rank) {
 void wait_for_async_receives() {
   fprintf(stderr, "%d: wait_for_async_receives()\n", my_rank);
 
-  MPI_Waitall(row_receives_index, row_receives, NULL);
+  MPI_Waitall(row_receives_index, row_receives, MPI_STATUS_IGNORE);
 
   for(int i=0; i < row_receive_buffers_index; ++i) {
     int matrix = row_receive_buffers[i][0];
@@ -199,7 +199,7 @@ void sync_receive_matrix() {
 
   char buffer[buffer_size];
   int buffer_position = 0;
-  MPI_Recv(&buffer, buffer_size, MPI_PACKED, MPI_ANY_SOURCE, MESSAGETYPE_MATRIX, MPI_COMM_WORLD, NULL);
+  MPI_Recv(&buffer, buffer_size, MPI_PACKED, MPI_ANY_SOURCE, MESSAGETYPE_MATRIX, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
   int matrix;
   MPI_Unpack(&buffer, buffer_size, &buffer_position, &matrix, 1, MPI_INT, MPI_COMM_WORLD);
