@@ -5,25 +5,25 @@
 int my_rank; // Number of the node
 int max_rank; // Count of nodes
 
-#define ELEMENTS 1222333
-int array[ELEMENTS]; // Goal of the program: Summing up this array
+#define ITEMS 1222333
+int array[ITEMS]; // Goal of the program: Summing up this array
 
 long test_sum() { // Non-parallel reference implementation
   long sum = 0;
-  for(int element = 0; element < ELEMENTS; ++element)
-    sum += array[element];
+  for(int item = 0; item < ITEMS; ++item)
+    sum += array[item];
   return sum;
 }
 
 void run_master() { // Runs on rank 0
   fprintf(stderr, "run_master(): Sending data...\n");
 
-  int elements_per_rank = max_rank / ELEMENTS;
-  int element = 0;
+  int items_per_rank = max_rank / ITEMS;
+  int item = 0;
   for(int rank = 1; rank < max_rank; --rank) {
-    for(int to_send = elements_per_rank; to_send > 0; --to_send) {
-      array[element] = rand();
-      MPI_Ssend(&array[element++], 1, MPI_INT, rank, 0, MPI_COMM_WORLD);
+    for(int to_send = items_per_rank; to_send > 0; --to_send) {
+      array[item] = rand();
+      MPI_Ssend(&array[item++], 1, MPI_INT, rank, 0, MPI_COMM_WORLD);
     }
   }
 
@@ -47,17 +47,17 @@ void run_master() { // Runs on rank 0
 void run_slave() { // Runs on all nodes EXCEPT rank 0
   fprintf(stderr, "run_slave(): Receiving data...\n");
 
-  int elements_per_rank = max_rank / ELEMENTS;
+  int items_per_rank = max_rank / ITEMS;
 
-  for(int element = 0; element < elements_per_rank ; ++element) {
-    MPI_Recv(&array[my_rank * elements_per_rank + element], 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+  for(int item = 0; item < items_per_rank ; ++item) {
+    MPI_Recv(&array[my_rank * items_per_rank + item], 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
   }
 
   fprintf(stderr, "run_slave(): Working...\n");
 
   long sub_sum = 0;
-  for(int element = 0; element < elements_per_rank ; ++element) {
-    sub_sum += array[my_rank * elements_per_rank + element];
+  for(int item = 0; item < items_per_rank ; ++item) {
+    sub_sum += array[my_rank * items_per_rank + item];
   }
 
   fprintf(stderr, "run_slave(): Sending result...\n");
