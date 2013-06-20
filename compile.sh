@@ -7,4 +7,5 @@ module add mpi/openmpi/1.6.1/gcc_4.7.0
 
 mpicc matrix-multiply.c -std=c99 -o matrix-multiply
 mpicc matrix-multiply-simple-debug.c -std=c99 -o matrix-multiply-simple-debug
+mpicc debug-tutorial.c -std=c99 -o debug-tutorial
 
