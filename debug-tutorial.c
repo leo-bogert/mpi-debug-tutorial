@@ -30,7 +30,7 @@ void run_master() { // Runs on rank 0
 
   int items_per_rank = ITEMS / (max_rank-1) ; // -1 because master does not process items
   int item = 0;
-  for(int rank = 1; rank < max_rank; --rank) {
+  for(int rank = 1; rank < max_rank; ++rank) {
     for(int to_send = items_per_rank; to_send > 0; --to_send) {
       MPI_Ssend(&array[item++], 1, MPI_INT, rank, 0, MPI_COMM_WORLD);
     }
