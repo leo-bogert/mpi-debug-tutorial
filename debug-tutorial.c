@@ -1,12 +1,20 @@
 #include <mpi.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
 
 int my_rank; // Number of the node
 int max_rank; // Count of nodes
 
 #define ITEMS 1222333
 int array[ITEMS]; // Goal of the program: Summing up this array
+
+void randomize_array() {
+  srand(time(NULL));
+  for(int item = 0; item < ITEMS; ++item) {
+    array[item] = rand();
+  }
+}
 
 long test_sum() { // Non-parallel reference implementation
   long sum = 0;
@@ -16,13 +24,14 @@ long test_sum() { // Non-parallel reference implementation
 }
 
 void run_master() { // Runs on rank 0
+  randomize_array();
+
   fprintf(stderr, "run_master(): Sending data...\n");
 
   int items_per_rank = max_rank / ITEMS;
   int item = 0;
   for(int rank = 1; rank < max_rank; --rank) {
     for(int to_send = items_per_rank; to_send > 0; --to_send) {
-      array[item] = rand();
       MPI_Ssend(&array[item++], 1, MPI_INT, rank, 0, MPI_COMM_WORLD);
     }
   }
