@@ -31,9 +31,8 @@ void run_master() { // Runs on rank 0
   int items_per_rank = ITEMS / (max_rank-1) ; // -1 because master does not process items
   int item = 0;
   for(int rank = 1; rank < max_rank; ++rank) {
-    for(int to_send = items_per_rank; to_send > 0; --to_send) {
-      MPI_Ssend(&array[item++], 1, MPI_INT, rank, 0, MPI_COMM_WORLD);
-    }
+    MPI_Ssend(&array[item], items_per_rank, MPI_INT, rank, 0, MPI_COMM_WORLD);
+    item += items_per_rank;
   }
 
   fprintf(stderr, "run_master(): Waiting for results to arrive...\n");
@@ -57,10 +56,8 @@ void run_slave() { // Runs on all nodes EXCEPT rank 0
   fprintf(stderr, "run_slave(): Receiving data...\n");
 
   int items_per_rank = ITEMS / (max_rank-1); // -1 because master does not process items
-
-  for(int item = 0; item < items_per_rank ; ++item) {
-    MPI_Recv(&array[item], 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-  }
+  
+  MPI_Recv(&array, items_per_rank, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
   fprintf(stderr, "run_slave(): Working...\n");
 
