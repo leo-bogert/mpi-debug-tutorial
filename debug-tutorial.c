@@ -57,13 +57,13 @@ void run_slave() { // Runs on all nodes EXCEPT rank 0
 
   int items_per_rank = ITEMS / (max_rank-1); // -1 because master does not process items
   
-  MPI_Recv(&array, items_per_rank, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+  MPI_Recv(&array[items_per_rank * (my_rank-1)], items_per_rank, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
   fprintf(stderr, "run_slave(): Working...\n");
 
   long sub_sum = 0;
   for(int item = 0; item < items_per_rank ; ++item) {
-    sub_sum += array[item];
+    sub_sum += array[items_per_rank * (my_rank-1) + item];
   }
 
   fprintf(stderr, "run_slave(): Sending result...\n");
