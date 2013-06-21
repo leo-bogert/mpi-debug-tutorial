@@ -16,7 +16,7 @@ void randomize_array() {
   }
 }
 
-long test_sum() { // Non-parallel reference implementation
+long sum__sequential_reference_implementation() { // Non-parallel reference implementation
   long sum = 0;
   for(int item = 0; item < ITEMS; ++item)
     sum += array[item];
@@ -26,49 +26,38 @@ long test_sum() { // Non-parallel reference implementation
 void run_master() { // Runs on rank 0
   randomize_array();
 
-  fprintf(stderr, "run_master(): Sending data...\n");
-
   int items_per_rank = ITEMS / (max_rank-1) ; // -1 because master does not process items
   int item = 0;
-  for(int rank = 1; rank < max_rank; ++rank) {
+  for(int rank = 1; rank < max_rank; ++rank) { // Send data to slaves
     MPI_Ssend(&array[item], items_per_rank, MPI_INT, rank, 0, MPI_COMM_WORLD);
     item += items_per_rank;
   }
 
-  fprintf(stderr, "run_master(): Waiting for results to arrive...\n");
-
-  long sum = 0;
-  for(int rank = 1; rank < max_rank; ++rank) {
-    long sub_sum;
+  long sum = 0; // The result of the computation - the sum of the array
+  for(int rank = 1; rank < max_rank; ++rank) { // Collect results from slaves
+    long sub_sum; // Each slave computes the sum of the sub-range of the array which it received
     MPI_Recv(&sub_sum, 1, MPI_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    sum += sub_sum;
+    sum += sub_sum; // The total sum is the sum of all partial sums.
   }
 
-  fprintf(stderr, "run_master(): Computing test...\n");
-
-  if(sum == test_sum())
+  if(sum == sum__sequential_reference_implementation())
     fprintf(stderr, "run_master(): Test OK.\n");
   else
     fprintf(stderr, "run_master(): Test FAILED!\n");
 }
 
 void run_slave() { // Runs on all nodes EXCEPT rank 0
-  fprintf(stderr, "run_slave(): Receiving data...\n");
-
   int items_per_rank = ITEMS / (max_rank-1); // -1 because master does not process items
-  
+
+  // Receive data
   MPI_Recv(&array[items_per_rank * (my_rank-1)], items_per_rank, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-  fprintf(stderr, "run_slave(): Working...\n");
-
   long sub_sum = 0;
-  for(int item = 0; item < items_per_rank ; ++item) {
+  for(int item = 0; item < items_per_rank ; ++item) { // Do the work
     sub_sum += array[items_per_rank * (my_rank-1) + item];
   }
 
-  fprintf(stderr, "run_slave(): Sending result...\n");
-
-  MPI_Ssend(&sub_sum, 1, MPI_LONG, 0, 0, MPI_COMM_WORLD);
+  MPI_Ssend(&sub_sum, 1, MPI_LONG, 0, 0, MPI_COMM_WORLD); // Send the result to the master
 }
 
 int main(int argc, char** argv) {
