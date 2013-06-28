@@ -1,3 +1,8 @@
+#define _POSIX_SOURCE // for kill()
+#include <sys/types.h> // for getppid(), kill()
+#include <signal.h> // for kill()
+#include <unistd.h> // for getppid()
+
 #include <mpi.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -8,6 +13,7 @@ int max_rank; // Count of nodes
 
 #define ITEMS 1222333
 int array[ITEMS]; // Goal of the program: Summing up this array
+int array2[ITEMS];
 
 long sum__sequential_reference_implementation() { // Non-parallel reference implementation
   long sum = 0;
@@ -22,12 +28,11 @@ void run_master() { // Runs on rank 0
     array[item] = rand();
   }
 
+  kill(getppid(), SIGUSR1);
+  sleep(1);
+
   int items_per_rank = ITEMS / (max_rank-1) ; // -1 because master does not process items
-  int item = 0;
-  for(int rank = 1; rank < max_rank; ++rank) { // Send data to slaves
-    MPI_Ssend(&array[item], items_per_rank, MPI_INT, rank, 0, MPI_COMM_WORLD);
-    item += items_per_rank;
-  }
+  MPI_Scatter(&array, items_per_rank, MPI_INT, &array2, items_per_rank, MPI_INT, 0, MPI_COMM_WORLD);
 
   long sum = 0; // The result of the computation - the sum of the array
   for(int rank = 1; rank < max_rank; ++rank) { // Collect results from slaves
@@ -44,9 +49,8 @@ void run_master() { // Runs on rank 0
 
 void run_slave() { // Runs on all nodes EXCEPT rank 0
   int items_per_rank = ITEMS / (max_rank-1); // -1 because master does not process items
-
-  // Receive data
-  MPI_Recv(&array[items_per_rank * (my_rank-1)], items_per_rank, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+  
+  MPI_Scatter(&array, items_per_rank, MPI_INT, &array, items_per_rank, MPI_INT, 0, MPI_COMM_WORLD);
 
   long sub_sum = 0;
   for(int item = 0; item < items_per_rank ; ++item) { // Do the work
