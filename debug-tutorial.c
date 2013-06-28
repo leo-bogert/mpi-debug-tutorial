@@ -9,13 +9,6 @@ int max_rank; // Count of nodes
 #define ITEMS 1222333
 int array[ITEMS]; // Goal of the program: Summing up this array
 
-void randomize_array() {
-  srand(time(NULL));
-  for(int item = 0; item < ITEMS; ++item) {
-    array[item] = rand();
-  }
-}
-
 long sum__sequential_reference_implementation() { // Non-parallel reference implementation
   long sum = 0;
   for(int item = 0; item < ITEMS; ++item)
@@ -24,7 +17,10 @@ long sum__sequential_reference_implementation() { // Non-parallel reference impl
 }
 
 void run_master() { // Runs on rank 0
-  randomize_array();
+  srand(time(NULL));
+  for(int item = 0; item < ITEMS; ++item) {
+    array[item] = rand();
+  }
 
   int items_per_rank = ITEMS / (max_rank-1) ; // -1 because master does not process items
   int item = 0;
