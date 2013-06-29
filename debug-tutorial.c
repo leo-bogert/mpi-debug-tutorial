@@ -8,12 +8,13 @@ int max_rank; // Count of nodes
 
 #define ITEMS 1222333
 int array[ITEMS]; // Goal of the program: Summing up this array
+long sum = 0; // The result of the computation
 
 long sum__sequential_reference_implementation() { // Non-parallel reference implementation
-  long sum = 0;
+  long s = 0;
   for(int item = 0; item < ITEMS; ++item)
-    sum += array[item];
-  return sum;
+    s += array[item];
+  return s;
 }
 
 void run_master() { // Runs on rank 0
@@ -29,12 +30,8 @@ void run_master() { // Runs on rank 0
     item += items_per_rank;
   }
 
-  long sum = 0; // The result of the computation - the sum of the array
-  for(int rank = 1; rank < max_rank; ++rank) { // Collect results from slaves
-    long sub_sum; // Each slave computes the sum of the sub-range of the array which it received
-    MPI_Recv(&sub_sum, 1, MPI_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    sum += sub_sum; // The total sum is the sum of all partial sums.
-  }
+  long sub_sum = 0; // Dummy sub sum for the master
+  MPI_Reduce(&sub_sum, &sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
 
   if(sum == sum__sequential_reference_implementation())
     fprintf(stderr, "run_master(): Test OK.\n");
@@ -53,7 +50,7 @@ void run_slave() { // Runs on all nodes EXCEPT rank 0
     sub_sum += array[items_per_rank * (my_rank-1) + item];
   }
 
-  MPI_Ssend(&sub_sum, 1, MPI_LONG, 0, 0, MPI_COMM_WORLD); // Send the result to the master
+  MPI_Reduce(&sub_sum, &sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
 }
 
 int main(int argc, char** argv) {
