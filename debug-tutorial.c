@@ -4,7 +4,7 @@
 #include <time.h>
 
 int my_rank; // Number of the node
-int max_rank; // Count of nodes
+int node_count; // Total number of nodes
 
 #define ITEMS 1222333
 int array[ITEMS]; // Goal of the program: Summing up this array
@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
   MPI_Init(&argc, &argv);
 
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-  MPI_Comm_size(MPI_COMM_WORLD, &max_rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &node_count);
  
   // The root must load the input data to distribute to the other nodes
   if(my_rank == 0) {
@@ -31,8 +31,8 @@ int main(int argc, char** argv) {
       array[item] = rand();
   }
   
-  int items_per_rank = ITEMS / max_rank;
-  int remainder_items = ITEMS % max_rank;
+  int items_per_rank = ITEMS / node_count;
+  int remainder_items = ITEMS % node_count;
   int* my_work;
   MPI_Alloc_mem(items_per_rank * sizeof(int), MPI_INFO_NULL, &my_work);
  
