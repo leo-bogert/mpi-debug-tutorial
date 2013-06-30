@@ -3,13 +3,6 @@
 #include <stdio.h>
 #include <time.h>
 
-int my_rank; // Number of the node
-int node_count; // Total number of nodes
-
-#define ITEMS 1222333
-int array[ITEMS]; // Goal of the program: Summing up this array
-long sum = 0; // The result of the computation
-
 long sum__sequential_reference_implementation() { // Non-parallel reference implementation
   long s = 0;
   for(int item = 0; item < ITEMS; ++item)
@@ -20,9 +13,16 @@ long sum__sequential_reference_implementation() { // Non-parallel reference impl
 int main(int argc, char** argv) {
   MPI_Init(&argc, &argv);
 
+  int my_rank; // Number of the node
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+  int node_count; // Total number of nodes
   MPI_Comm_size(MPI_COMM_WORLD, &node_count);
  
+  int ITEMS = 1222333;
+  int array[ITEMS]; // Goal of the program: Summing up this array
+  long sum = 0; // The result of the computation
+  
   // The root must load the input data to distribute to the other nodes
   if(my_rank == 0) {
     // In our case it generates a random array as input data
