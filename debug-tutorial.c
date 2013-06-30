@@ -17,52 +17,48 @@ long sum__sequential_reference_implementation() { // Non-parallel reference impl
   return s;
 }
 
-void run_master() { // Runs on rank 0
-  srand(time(NULL));
-  for(int item = 0; item < ITEMS; ++item) {
-    array[item] = rand();
-  }
-
-  int items_per_rank = ITEMS / (max_rank-1) ; // -1 because master does not process items
-  int item = 0;
-  for(int rank = 1; rank < max_rank; ++rank) { // Send data to slaves
-    MPI_Ssend(&array[item], items_per_rank, MPI_INT, rank, 0, MPI_COMM_WORLD);
-    item += items_per_rank;
-  }
-
-  long sub_sum = 0; // Dummy sub sum for the master
-  MPI_Reduce(&sub_sum, &sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-
-  if(sum == sum__sequential_reference_implementation())
-    fprintf(stderr, "run_master(): Test OK.\n");
-  else
-    fprintf(stderr, "run_master(): Test FAILED!\n");
-}
-
-void run_slave() { // Runs on all nodes EXCEPT rank 0
-  int items_per_rank = ITEMS / (max_rank-1); // -1 because master does not process items
-
-  // Receive data
-  MPI_Recv(&array[items_per_rank * (my_rank-1)], items_per_rank, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-  long sub_sum = 0;
-  for(int item = 0; item < items_per_rank ; ++item) { // Do the work
-    sub_sum += array[items_per_rank * (my_rank-1) + item];
-  }
-
-  MPI_Reduce(&sub_sum, &sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-}
-
 int main(int argc, char** argv) {
   MPI_Init(&argc, &argv);
 
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &max_rank);
  
+  // The root must load the input data to distribute to the other nodes
   if(my_rank == 0) {
-    run_master();
-  } else {
-    run_slave();
+    // In our case it generates a random array as input data
+    srand(time(NULL));
+    for(int item = 0; item < ITEMS; ++item)
+      array[item] = rand();
+  }
+  
+  int items_per_rank = ITEMS / max_rank;
+  int remainder_items = ITEMS % max_rank;
+  int* my_work;
+  MPI_Alloc_mem(items_per_rank * sizeof(int), MPI_INFO_NULL, &my_work);
+ 
+  MPI_Scatter(&array[remainder_items], items_per_rank, MPI_INT, my_work, items_per_rank, MPI_INT, 0, MPI_COMM_WORLD);
+ 
+  // This is the actual working-loop
+  long sub_sum = 0;
+  for(int item = 0; item < items_per_rank; ++item)
+    sub_sum += my_work[item];
+
+  if(my_rank == 0) {
+    while(remainder_items-- > 0)
+      sub_sum += array[remainder_items];
+  }
+
+  MPI_Free_mem(my_work);
+
+  MPI_Reduce(&sub_sum, &sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+ 
+  if(my_rank == 0) {
+    // The root can now process the result of the computation.
+    // In our case, we compare it with the sequential reference implementation.
+    if(sum == sum__sequential_reference_implementation())
+      fprintf(stderr, "Test OK.\n");
+    else
+      fprintf(stderr, "Test FAILED!\n");
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
