@@ -4,7 +4,7 @@
 #include <time.h>
 
 #define items 1222333
-int array[items]; // Goal of the program: Summing up this array
+int array[items]; // Goal of the program: Summing up this array. (Instead use allocated memory in real programs!)
 long sum = 0; // The result of the computation
 
 long sum__sequential_reference_implementation() { // Non-parallel reference implementation
