@@ -3,7 +3,11 @@
 #include <stdio.h>
 #include <time.h>
 
-long sum__sequential_reference_implementation(int* array, int items) { // Non-parallel reference implementation
+#define items 1222333
+int array[items]; // Goal of the program: Summing up this array
+long sum = 0; // The result of the computation
+
+long sum__sequential_reference_implementation() { // Non-parallel reference implementation
   long s = 0;
   for(int item = 0; item < items; ++item)
     s += array[item];
@@ -18,10 +22,6 @@ int main(int argc, char** argv) {
 
   int node_count; // Total number of nodes
   MPI_Comm_size(MPI_COMM_WORLD, &node_count);
- 
-  int items = 1222333;
-  int array[items]; // Goal of the program: Summing up this array
-  long sum = 0; // The result of the computation
   
   // The root must load the input data to distribute to the other nodes
   if(my_rank == 0) {
@@ -33,7 +33,8 @@ int main(int argc, char** argv) {
   
   int items_per_rank = items / node_count;
   int remainder_items = items % node_count;
-  int my_work[items_per_rank]; // Do not generate large buffers on the stack in real world programs!
+  int* my_work;
+  MPI_Alloc_mem(items_per_rank * sizeof(int), MPI_INFO_NULL, &my_work);
  
   // MPI_Scatter is a collective operation which distributes an equal-sized part of the given array to each node.
   MPI_Scatter(&array[remainder_items] /* send buffer */, items_per_rank /* send count per node */, MPI_INT /* send type */,
@@ -50,6 +51,8 @@ int main(int argc, char** argv) {
       sub_sum += array[--remainder_items];
   }
 
+  MPI_Free_mem(my_work);
+
   // MPI_Reduce with op-code MPI_SUM is a collective operation which sums up the input sub_sum of each node
   // into single a resulting output sum on the master.
   MPI_Reduce(&sub_sum /* input to sum up */, &sum /* output */, 1 /* input count */, MPI_LONG /* input type */,
@@ -58,7 +61,7 @@ int main(int argc, char** argv) {
   if(my_rank == 0) {
     // The root can now process the result of the computation.
     // In our case, we compare it with the sequential reference implementation.
-    if(sum == sum__sequential_reference_implementation(array, items))
+    if(sum == sum__sequential_reference_implementation())
       fprintf(stderr, "Test OK.\n");
     else
       fprintf(stderr, "Test FAILED!\n");
