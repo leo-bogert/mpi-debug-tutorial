@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <time.h>
 
-long sum__sequential_reference_implementation() { // Non-parallel reference implementation
+long sum__sequential_reference_implementation(int* array, int ITEMS) { // Non-parallel reference implementation
   long s = 0;
   for(int item = 0; item < ITEMS; ++item)
     s += array[item];
@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
   if(my_rank == 0) {
     // The root can now process the result of the computation.
     // In our case, we compare it with the sequential reference implementation.
-    if(sum == sum__sequential_reference_implementation())
+    if(sum == sum__sequential_reference_implementation(array, ITEMS))
       fprintf(stderr, "Test OK.\n");
     else
       fprintf(stderr, "Test FAILED!\n");
