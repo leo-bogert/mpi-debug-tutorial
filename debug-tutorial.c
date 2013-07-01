@@ -59,8 +59,8 @@ int main(int argc, char** argv) {
 	     MPI_SUM /* operation */, 0 /* output is stored on this rank */, MPI_COMM_WORLD /* communication channel */);
  
   if(my_rank == 0) {
-    // The root can now process the result of the computation.
-    // In our case, we compare it with the sequential reference implementation.
+    // The result of the computation now is available on rank 0.
+    // We compare it with the sequential reference implementation to test our parallel implementation.
     if(sum == sum__sequential_reference_implementation())
       fprintf(stderr, "Test OK.\n");
     else
@@ -69,6 +69,5 @@ int main(int argc, char** argv) {
 
   MPI_Barrier(MPI_COMM_WORLD);
   MPI_Finalize();
-
   return EXIT_SUCCESS;
 }
