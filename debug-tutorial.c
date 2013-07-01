@@ -42,12 +42,12 @@ int main(int argc, char** argv) {
  
   // This is the actual working-loop
   long sub_sum = 0;
-  for(int item = 0; item < items_per_rank; ++item)
-    sub_sum += my_work[item];
+  while(items_per_rank > 0)
+    sub_sum += my_work[--items_per_rank];
 
   if(my_rank == 0) { // Scatter cannot deal with a division remainder so we manually deal with it
-    while(remainder_items-- > 0)
-      sub_sum += array[remainder_items];
+    while(remainder_items > 0)
+      sub_sum += array[--remainder_items];
   }
 
   // MPI_Reduce with op-code MPI_SUM is a collective operation which sums up the input sub_sum of each node
