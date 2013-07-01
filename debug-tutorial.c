@@ -3,9 +3,9 @@
 #include <stdio.h>
 #include <time.h>
 
-long sum__sequential_reference_implementation(int* array, int ITEMS) { // Non-parallel reference implementation
+long sum__sequential_reference_implementation(int* array, int items) { // Non-parallel reference implementation
   long s = 0;
-  for(int item = 0; item < ITEMS; ++item)
+  for(int item = 0; item < items; ++item)
     s += array[item];
   return s;
 }
@@ -19,20 +19,20 @@ int main(int argc, char** argv) {
   int node_count; // Total number of nodes
   MPI_Comm_size(MPI_COMM_WORLD, &node_count);
  
-  int ITEMS = 1222333;
-  int array[ITEMS]; // Goal of the program: Summing up this array
+  int items = 1222333;
+  int array[items]; // Goal of the program: Summing up this array
   long sum = 0; // The result of the computation
   
   // The root must load the input data to distribute to the other nodes
   if(my_rank == 0) {
     // In our case it generates a random array as input data
     srand(time(NULL));
-    for(int item = 0; item < ITEMS; ++item)
+    for(int item = 0; item < items; ++item)
       array[item] = rand();
   }
   
-  int items_per_rank = ITEMS / node_count;
-  int remainder_items = ITEMS % node_count;
+  int items_per_rank = items / node_count;
+  int remainder_items = items % node_count;
   int* my_work;
   MPI_Alloc_mem(items_per_rank * sizeof(int), MPI_INFO_NULL, &my_work);
  
@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
   if(my_rank == 0) {
     // The root can now process the result of the computation.
     // In our case, we compare it with the sequential reference implementation.
-    if(sum == sum__sequential_reference_implementation(array, ITEMS))
+    if(sum == sum__sequential_reference_implementation(array, items))
       fprintf(stderr, "Test OK.\n");
     else
       fprintf(stderr, "Test FAILED!\n");
