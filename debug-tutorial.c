@@ -33,24 +33,27 @@ int main(int argc, char** argv) {
   
   int items_per_rank = items / node_count;
   int remainder_items = items % node_count;
-  int* my_work;
-  MPI_Alloc_mem(items_per_rank * sizeof(int), MPI_INFO_NULL, &my_work);
+  int my_work[items_per_rank]; // Do not generate large buffers on the stack in real world programs!
  
-  MPI_Scatter(&array[remainder_items], items_per_rank, MPI_INT, my_work, items_per_rank, MPI_INT, 0, MPI_COMM_WORLD);
+  // MPI_Scatter is a collective operation which distributes an equal-sized part of the given array to each node.
+  MPI_Scatter(&array[remainder_items] /* send buffer */, items_per_rank /* send count per node */, MPI_INT /* send type */,
+	      my_work /* receive buffer on each node */, items_per_rank /* receive count */ , MPI_INT /* receive type */, 
+	      0 /* send buffer is stored on this rank */, MPI_COMM_WORLD /* communication channel */);
  
   // This is the actual working-loop
   long sub_sum = 0;
   for(int item = 0; item < items_per_rank; ++item)
     sub_sum += my_work[item];
 
-  if(my_rank == 0) {
+  if(my_rank == 0) { // Scatter cannot deal with a division remainder so we manually deal with it
     while(remainder_items-- > 0)
       sub_sum += array[remainder_items];
   }
 
-  MPI_Free_mem(my_work);
-
-  MPI_Reduce(&sub_sum, &sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  // MPI_Reduce with op-code MPI_SUM is a collective operation which sums up the input sub_sum of each node
+  // into single a resulting output sum on the master.
+  MPI_Reduce(&sub_sum /* input to sum up */, &sum /* output */, 1 /* input count */, MPI_LONG /* input type */,
+	     MPI_SUM /* operation */, 0 /* output is stored on this rank */, MPI_COMM_WORLD /* communication channel */);
  
   if(my_rank == 0) {
     // The root can now process the result of the computation.
