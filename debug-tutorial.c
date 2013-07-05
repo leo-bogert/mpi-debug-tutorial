@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <time.h>
 
-#define items 1222333
+#define items (1024*1024)
 int array[items]; // Goal of the program: Summing up this array. (Instead use allocated memory in real programs!)
 long sum = 0; // The result of the computation
 
@@ -43,12 +43,12 @@ int main(int argc, char** argv) {
  
   // This is the actual working-loop
   long sub_sum = 0;
-  while(items_per_rank > 0)
-    sub_sum += my_work[--items_per_rank];
+  for(int i=0; i < items_per_rank; i++)
+    sub_sum += my_work[i];
 
   if(my_rank == 0) { // Scatter cannot deal with a division remainder so we manually deal with it
     while(remainder_items > 0)
-      sub_sum += array[--remainder_items];
+      sub_sum += array[remainder_items--];
   }
 
   MPI_Free_mem(my_work);
