@@ -2,11 +2,12 @@
 
 print_syntax() {
 cat >&2 <<EOF
-Syntax: $0 command [argument*]
+Syntax: $0 [--xterm] command [argument*]
 
 This script will execute the given command with the given arguments.
 It will wait for the command to exit OR send SIGUSR1 to the script.
 If SIGUSR1 is sent, it will attach gdb to the command interactively so you can debug.
+If you want to launch GDB in a Xterm window, use the "--xterm" switch.
 
 In C, to send SIGUSR1 to the script, use "kill(getppid(), SIGUSR1);".
 If you want gdb to be attached at the precise location of kill(), add a "sleep(10);" after it:
@@ -37,10 +38,14 @@ main() {
 	exit 1
     fi
 
+    local gdb_command='gdb'
+    if [ "$1" = '--xterm' ] ; then
+	gdb_command='xterm -e gdb'
+	shift 1    # Remove "--xterm" from the parameter list
+    fi
+
     command="$1"
-    
-    # Remove command from the parameter list
-    shift 1
+    shift 1 # Remove the command from the parameter list
 
     # Be careful to understand what the following line does:
     # - It starts a subshell as a backround job
@@ -62,7 +67,7 @@ main() {
     #    The gdb manpage specifies that it wants the command name even when being given a PID.
     #    This seems weird but it clearly states that it will attach to the existing PID instead
     #    of executing the command again.
-    trap "gdb '$command' '$command_pid'" SIGUSR1
+    trap "$gdb_command '$command' '$command_pid'" SIGUSR1
 
     # Now that we have trapped SIGUSR1, the subshell can continue execution to run the main command
     # But first, we must avoid a race condition: It might take some time for the subshell to send
