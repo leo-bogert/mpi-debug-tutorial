@@ -1,0 +1,32 @@
+- Maybe get rid of telling people that they should use the long Queue for debugging. Short queue is OK as long as they specify the run time (I think the parameter was "-W").
+
+- Provide 3 source code files:
+	- debug-tutorial-1.c - the original bugged source code.
+	- debug-tutorial-2.c - bugged source code with a breakpoint added.
+	- debug-tutorial-3.c - bugfixed source code.
+
+- Add screenshots of souce code to tutorial
+
+- Maybe say something about gdb command detach?
+
+- Explain that the developer should use binary search when he isn't certain about where the problem is
+
+- mempatrol / valgrind
+
+- checkpointing
+
+- Deploy debug-tutorial to Git repository available on Mogon
+
+selective-gdb:
+	- Create a header with a define for breakpointing. Copypasta with comments for it:
+		#define _POSIX_SOURCE // for kill()
+		#include <sys/types.h> // for getppid(), kill()
+		#include <signal.h> // for kill()
+		#include <unistd.h> // for getppid()
+
+	- Rename to selective-debug
+
+	- Add support for cgdb
+	
+	- Deploy to Mogon using "environment-modules" Framework
+
