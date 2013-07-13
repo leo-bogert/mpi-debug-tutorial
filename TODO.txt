@@ -17,15 +17,9 @@
 
 - Deploy debug-tutorial to Git repository available on Mogon
 
-selective-gdb:
-	- Create a header with a define for breakpointing. Copypasta with comments for it:
-		#define _POSIX_SOURCE // for kill()
-		#include <sys/types.h> // for getppid(), kill()
-		#include <signal.h> // for kill()
-		#include <unistd.h> // for getppid()
-
-	- Rename to selective-debug
-
+- Change #include "selective-debug.h" to #include <selective-debug.h> once we have deployed selective-debug. This needs to be done in debug-tutorial-2-*.c and in selective-gdb.
+	
+selective-debug:
 	- Add support for cgdb
 	
 	- Deploy to Mogon using "environment-modules" Framework
