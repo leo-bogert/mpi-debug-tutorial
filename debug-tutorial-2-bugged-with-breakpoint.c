@@ -1,3 +1,5 @@
+#include "selective-debug.h"
+
 #include <mpi.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -47,8 +49,12 @@ int main(int argc, char** argv) {
     sub_sum += my_work[i];
 
   if(my_rank == 0) { // Scatter cannot deal with a division remainder so we manually deal with it
-    while(remainder_items > 0)
-      sub_sum += array[remainder_items--];
+    BREAKPOINT_AND_SLEEP(10);
+
+    while(remainder_items > 0) {
+      int index = remainder_items--;
+      sub_sum += array[index];
+    }
   }
 
   MPI_Free_mem(my_work);
