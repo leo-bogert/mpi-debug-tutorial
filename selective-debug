@@ -9,15 +9,14 @@ It will wait for the command to exit OR send SIGUSR1 to the script.
 If SIGUSR1 is sent, it will attach gdb to the command interactively so you can debug.
 If you want to launch GDB in a Xterm window, use the "--xterm" switch.
 
-In C, to send SIGUSR1 to the script, use "kill(getppid(), SIGUSR1);".
-If you want gdb to be attached at the precise location of kill(), add a "sleep(10);" after it:
-kill() does not wait for the signal to be delivered, execution would continue without sleep().
-To make those functions available, add the following BEFORE your includes:
+In C, to send SIGUSR1 to the script, use the macro BREAKPOINT_AND_SLEEP(10);
+Notice that this will send SIGUSR1 and then sleep for 10 seconds.
+The sleep(10) is necessary to give GDB some time to attach itself.
+If you notice that after attaching you are not inside of sleep(), increase the delay.
 
-#define _POSIX_SOURCE
-#include <sys/types.h>
-#include <signal.h>
-#include <unistd.h>
+To make the macro available, add the following BEFORE your includes:
+#include "selective-debug.h"
+
 EOF
 }
 
