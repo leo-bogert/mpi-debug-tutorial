@@ -1,13 +1,29 @@
 #!/bin/bash
 
+######################################################################
+# GLOBAL VARIABLES, filled by parse_parameters()
+######################################################################
+# The program which we want to debug
+declare command
+
+# Array of the parameters with with the program shall be launched
+declare -a command_parameters
+
+# The command to use to attach the debugger to the command.
+# Must suport the following syntax:
+# Parameter 1 = Name of the binary of the process to be debuged.
+# Parameter 2 = PID of the process to be debugged.
+declare gdb_command
+#######################################################################
+
+
 print_syntax() {
 cat >&2 <<EOF
-Syntax: $0 [--xterm] command [argument*]
+Syntax: $0 [--xterm] [--cgdb] [--] command [argument*]
 
 This script will execute the given command with the given arguments.
 It will wait for the command to exit OR send SIGUSR1 to the script.
 If SIGUSR1 is sent, it will attach gdb to the command interactively so you can debug.
-If you want to launch GDB in a Xterm window, use the "--xterm" switch.
 
 In C, to send SIGUSR1 to the script, use the macro BREAKPOINT_AND_SLEEP(10);
 Notice that this will send SIGUSR1 and then sleep for 10 seconds.
@@ -17,10 +33,15 @@ If you notice that after attaching you are not inside of sleep(), increase the d
 To make the macro available, add the following BEFORE your includes:
 #include "selective-debug.h"
 
+Additional options:
+- If you want to launch GDB in a Xterm window, use the "--xterm" switch.
+- If you want to use CGDB instead of gdb, use the "--cgdb" switch.
+- To terminate the parameter list, you can add "--" to the end of it. This is necessary if the command starts with "--".
+
 EOF
 }
 
-# Returns EXIT_SUCCESS (= 0) if a process has been paused
+# Returns EXIT_SUCCESS (= 0) if a process has been paused, EXIT_FAILURE otherwise.
 is_process_suspended() {
     process_state="$(ps --pid "$1" --no-headers -o state)"
 
@@ -31,20 +52,72 @@ is_process_suspended() {
     fi
 }
 
+# Fills the global variables "command", "command_parameters" and "gdb_command" from the given parameter list.
+# Returns EXIT_SUCCESS (= 0) if the parsing was successful.
+# Returns EXIT_FAILURE (= 1) if the syntax is not followed. Use print_syntax then.
+parse_parameters() {
+    # Parse the parameter list
+    local use_xterm=0
+    local use_cgdb=0
+    while [ "$#" -gt 0 ] && [[ "$1" = --* ]] ; do
+	local param="$1"
+	shift 1
+
+	case "$param" in
+	    --xterm)
+		use_xterm=1 ;;
+	    --cgdb)
+		use_cgdb=1 ;;
+	    --)
+		break ;;
+	    *)
+	        # Unknown parameter, return EXIT_FAILURE
+		return 1
+		;;
+	esac
+    done
+
+    # Construct the debugger command from the parsed parameters
+    if [ "$use_cgdb" -eq 1 ] ; then
+	gdb_command='cgdb'
+    else
+	gdb_command='gdb'
+    fi
+
+    if [ "$use_xterm" -eq 1 ] ; then
+	gdb_command="xterm -e $gdb_command"
+    fi
+
+    # Obtain the actual command.
+    if [ "$#" -lt 1 ] ; then
+	# Command is missing. Return EXIT_FAILURE
+        return 1
+    else
+	command="$1"
+	shift 1 # Remove the command from the parameter list
+    fi
+
+    # The remaining parameters are the parameters of the command. We copy them as an array to the global variable.
+    command_parameters=( "$@" )
+
+    # DEBUG CODE.
+    #
+    # echo "command:$command"
+    # echo "gdb_command:$gdb_command"
+    # for param in "${command_parameters[@]}" ; do
+    #	echo "param:$param"
+    # done
+}
+
 main() {
-    if [ $# -lt 1 ] ; then
+    # Fills the global variables "command", "command_parameters" and "gdb_command" from the commandline.
+    # command = The actual program which shall be launched and debugged.
+    # command_parameters = An array which contains the parameters to pass to the command.
+    # gdb_command = The command to use to launch and attach the debugger.
+    if ! parse_parameters "$@" ; then
 	print_syntax
 	exit 1
     fi
-
-    local gdb_command='gdb'
-    if [ "$1" = '--xterm' ] ; then
-	gdb_command='xterm -e gdb'
-	shift 1    # Remove "--xterm" from the parameter list
-    fi
-
-    command="$1"
-    shift 1 # Remove the command from the parameter list
 
     # Be careful to understand what the following line does:
     # - It starts a subshell as a backround job
@@ -58,7 +131,7 @@ main() {
     # It might happen that it sent the "debug me" signal to us before we could set up the trap on it.
     # We cannot just set up the trap before the process is started because we need to know the PID
     # for GDB.
-    ( kill -SIGSTOP "$BASHPID" ; exec "$command" "$@" ) &
+    ( kill -SIGSTOP "$BASHPID" ; exec "$command" "${command_parameters[@]}" ) &
     command_pid="$!"
 
     # Trap signal SIGUSR1. Upon receiving it, execute gdb with command name and PID as parameters.
