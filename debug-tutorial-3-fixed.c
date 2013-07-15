@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
 
   if(my_rank == 0) { // Scatter cannot deal with a division remainder so we manually deal with it
     while(remainder_items > 0)
-      sub_sum += array[remainder_items--];
+      sub_sum += array[--remainder_items];
   }
 
   MPI_Free_mem(my_work);
