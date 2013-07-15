@@ -1,10 +1,5 @@
 - Maybe get rid of telling people that they should use the long Queue for debugging. Short queue is OK as long as they specify the run time (I think the parameter was "-W").
 
-- Provide 3 source code files:
-	- debug-tutorial-1.c - the original bugged source code.
-	- debug-tutorial-2.c - bugged source code with a breakpoint added.
-	- debug-tutorial-3.c - bugfixed source code.
-
 - Add screenshots of souce code to tutorial
 
 - Maybe say something about gdb command detach?
@@ -20,7 +15,5 @@
 - Change #include "selective-debug.h" to #include <selective-debug.h> once we have deployed selective-debug. This needs to be done in debug-tutorial-2-*.c and in selective-gdb.
 	
 selective-debug:
-	- Add support for cgdb
-	
 	- Deploy to Mogon using "environment-modules" Framework
 
