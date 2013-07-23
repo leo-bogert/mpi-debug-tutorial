@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ######################################################################
-# GLOBAL VARIABLES, filled by parse_parameters()
+# GLOBAL VARIABLES, filled by parse_parameters() and main()
 ######################################################################
 # The program which we want to debug
 declare command
@@ -9,33 +9,42 @@ declare command
 # Array of the parameters with with the program shall be launched
 declare -a command_parameters
 
-# The command to use to attach the debugger to the command.
-# Must suport the following syntax:
-# Parameter 1 = Name of the binary of the process to be debuged.
-# Parameter 2 = PID of the process to be debugged.
-declare gdb_command
+# The process ID of the running command
+declare command_pid
+
+# The debugger to use.
+# May be one of cgdb, gdb, strace, ltrace.
+declare debugger
+
+# Whether to wrap the debugger inside of an xterm.
+# 1 for true, 0 for false
+declare use_xterm
 #######################################################################
 
 
 print_syntax() {
 cat >&2 <<EOF
-Syntax: $0 [--xterm] [--cgdb] [--] command [argument*]
+Syntax: $0 [--xterm] [--cgdb|--ltrace|--strace] [--] command [argument*]
 
 This script will execute the given command with the given arguments.
 It will wait for the command to exit OR send SIGUSR1 to the script.
-If SIGUSR1 is sent, it will attach gdb to the command interactively so you can debug.
+If SIGUSR1 is sent, it will attach the selected debugger to the command interactively so you can debug.
+The default debugger is GDB.
 
 In C, to send SIGUSR1 to the script, use the macro BREAKPOINT_AND_SLEEP(10);
 Notice that this will send SIGUSR1 and then sleep for 10 seconds.
-The sleep(10) is necessary to give GDB some time to attach itself.
+The sleep(10) is necessary to give the debugger some time to attach itself.
 If you notice that after attaching you are not inside of sleep(), increase the delay.
 
 To make the macro available, add the following BEFORE your includes:
 #include "selective-debug.h"
 
 Additional options:
-- If you want to launch GDB in a Xterm window, use the "--xterm" switch.
-- If you want to use CGDB instead of gdb, use the "--cgdb" switch.
+- If you want to launch the debugger in a Xterm window, use the "--xterm" switch.
+- For using gdb as debugger (default), use the "--gdb" switch.
+- For using cgdb as debugger, use the "--cgdb" switch.
+- For using ltrace as debugger, use the "--ltrace" switch.
+- For using strace as debugger, use the "--strace" switch.
 - To terminate the parameter list, you can add "--" to the end of it. This is necessary if the command starts with "--".
 
 EOF
@@ -52,22 +61,28 @@ is_process_suspended() {
     fi
 }
 
-# Fills the global variables "command", "command_parameters" and "gdb_command" from the given parameter list.
+# Fills the global variables "command", "command_parameters", "debugger" and "use_xterm" from the given parameter list.
 # Returns EXIT_SUCCESS (= 0) if the parsing was successful.
 # Returns EXIT_FAILURE (= 1) if the syntax is not followed. Use print_syntax then.
 parse_parameters() {
     # Parse the parameter list
-    local use_xterm=0
-    local use_cgdb=0
+    use_xterm=0
+    debugger='gdb'
     while [ "$#" -gt 0 ] && [[ "$1" = --* ]] ; do
 	local param="$1"
 	shift 1
 
 	case "$param" in
+	    --cgdb)
+		debugger='cgdb' ;;
+	    --gdb)
+		debugger='gdb' ;;
+	    --strace)
+		debugger='strace' ;;
+	    --ltrace)
+	        debugger='ltrace' ;;
 	    --xterm)
 		use_xterm=1 ;;
-	    --cgdb)
-		use_cgdb=1 ;;
 	    --)
 		break ;;
 	    *)
@@ -76,17 +91,6 @@ parse_parameters() {
 		;;
 	esac
     done
-
-    # Construct the debugger command from the parsed parameters
-    if [ "$use_cgdb" -eq 1 ] ; then
-	gdb_command='cgdb'
-    else
-	gdb_command='gdb'
-    fi
-
-    if [ "$use_xterm" -eq 1 ] ; then
-	gdb_command="xterm -e $gdb_command"
-    fi
 
     # Obtain the actual command.
     if [ "$#" -lt 1 ] ; then
@@ -100,20 +104,39 @@ parse_parameters() {
     # The remaining parameters are the parameters of the command. We copy them as an array to the global variable.
     command_parameters=( "$@" )
 
-    # DEBUG CODE.
-    #
-    # echo "command:$command"
-    # echo "gdb_command:$gdb_command"
-    # for param in "${command_parameters[@]}" ; do
+    # DEBUG CODE:
+    #echo "command:$command"
+    #echo "debugger:$debugger"
+    #echo "use_xterm:$use_xterm"
+    #for param in "${command_parameters[@]}" ; do
     #	echo "param:$param"
-    # done
+    #done
+}
+
+construct_attach_debugger_command() {
+    local debug_command="$debugger"
+
+    if [ "$use_xterm" -eq 1 ] ; then
+	debug_command="xterm -e $debug_command"
+    fi
+
+    if [[ "$debugger" = *gdb ]] ; then
+        # Notice:
+        #    The gdb manpage specifies that it wants the command name even when being given a PID.
+        #    This seems weird but it clearly states that it will attach to the existing PID instead
+        #    of executing the command again.
+	debug_command="$debug_command '$command' '$command_pid'"
+    else # strace / ltrace
+	debug_command="$debug_command -p '$command_pid'"
+    fi
+    
+    # DEBUG CODE:
+    # echo "debug command:$debug_command" >&2
+    # echo "$debug_command"
 }
 
 main() {
-    # Fills the global variables "command", "command_parameters" and "gdb_command" from the commandline.
-    # command = The actual program which shall be launched and debugged.
-    # command_parameters = An array which contains the parameters to pass to the command.
-    # gdb_command = The command to use to launch and attach the debugger.
+    # Fills the global variables from the commandline.
     if ! parse_parameters "$@" ; then
 	print_syntax
 	exit 1
@@ -134,12 +157,8 @@ main() {
     ( kill -SIGSTOP "$BASHPID" ; exec "$command" "${command_parameters[@]}" ) &
     command_pid="$!"
 
-    # Trap signal SIGUSR1. Upon receiving it, execute gdb with command name and PID as parameters.
-    # Notice:
-    #    The gdb manpage specifies that it wants the command name even when being given a PID.
-    #    This seems weird but it clearly states that it will attach to the existing PID instead
-    #    of executing the command again.
-    trap "$gdb_command '$command' '$command_pid'" SIGUSR1
+    # Trap signal SIGUSR1. Upon receiving it, execute the command to attach the debugger.
+    trap "$(construct_attach_debugger_command)" SIGUSR1
 
     # Now that we have trapped SIGUSR1, the subshell can continue execution to run the main command
     # But first, we must avoid a race condition: It might take some time for the subshell to send
