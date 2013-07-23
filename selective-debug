@@ -132,7 +132,8 @@ construct_attach_debugger_command() {
     
     # DEBUG CODE:
     # echo "debug command:$debug_command" >&2
-    # echo "$debug_command"
+    
+    echo "$debug_command"
 }
 
 main() {
