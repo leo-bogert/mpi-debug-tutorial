@@ -14,17 +14,24 @@ declare command_pid
 
 # The debugger to use.
 # May be one of cgdb, gdb, strace, ltrace.
-declare debugger
+declare debugger='gdb'
+
+# When using OpenMPI, whether to create a log file "<rank of the process>.log>"
+# 1 for true, 0 for false
+declare log=0
+
+# When logging the debugger output to a file, do not show it on the terminal.
+declare log_quiet=0
 
 # Whether to wrap the debugger inside of an xterm.
 # 1 for true, 0 for false
-declare use_xterm
+declare use_xterm=0
 #######################################################################
 
 
 print_syntax() {
 cat >&2 <<EOF
-Syntax: $0 [--xterm] [--cgdb|--ltrace|--strace] [--] command [argument*]
+Syntax: $0 [--cgdb|--ltrace|--strace] [--log] [--xterm] [--] command [argument*]
 
 This script will execute the given command with the given arguments.
 It will wait for the command to exit OR send SIGUSR1 to the script.
@@ -39,13 +46,17 @@ If you notice that after attaching you are not inside of sleep(), increase the d
 To make the macro available, add the following BEFORE your includes:
 #include "selective-debug.h"
 
-Additional options:
---cgdb     Use cgdb as debugger.
---gdb      Use gdb as debugger (default).
---ltrace   Use ltrace as debugger.
---strace   Use strace as debugger.
---xterm    Launch the debugger in a Xterm window.
---         Terminate the parameter list. This is necessary if the command starts with "--".
+Options:
+--cgdb       Use cgdb as debugger.
+--gdb        Use gdb as debugger (default).
+--log        If you are using OpenMPI and want to clone the output of the debugger to a per-rank log file.
+             Filename will be "selective-debug-rankN.log". The file will be appended, not overwritten.
+             The output will also go to the terminal so you can use --xterm.
+--log-quiet  Only log debugger output to files, do not show it on the terminal.
+--ltrace     Use ltrace as debugger.
+--strace     Use strace as debugger.
+--xterm      Launch the debugger in a Xterm window.
+--           Terminate the parameter list. This is necessary if the command starts with "--".
 
 EOF
 }
@@ -61,13 +72,11 @@ is_process_suspended() {
     fi
 }
 
-# Fills the global variables "command", "command_parameters", "debugger" and "use_xterm" from the given parameter list.
+# Fills the global variables from the given parameter list.
 # Returns EXIT_SUCCESS (= 0) if the parsing was successful.
 # Returns EXIT_FAILURE (= 1) if the syntax is not followed. Use print_syntax then.
 parse_parameters() {
     # Parse the parameter list
-    use_xterm=0
-    debugger='gdb'
     while [ "$#" -gt 0 ] && [[ "$1" = --* ]] ; do
 	local param="$1"
 	shift 1
@@ -79,6 +88,12 @@ parse_parameters() {
 		debugger='gdb' ;;
 	    --strace)
 		debugger='strace' ;;
+	    --log)
+		log=1 ;;
+	    --log-quiet)
+		log=1
+		log_quiet=1
+		;;
 	    --ltrace)
 	        debugger='ltrace' ;;
 	    --xterm)
@@ -130,6 +145,20 @@ construct_attach_debugger_command() {
 	debug_command="$debug_command -p '$command_pid'"
     fi
     
+    if [ "$log" -eq 1 ] ; then
+	if [ -z "$OMPI_COMM_WORLD_RANK" ] ; then
+	    echo "--log error: OpenMPI environment variable undefined: OMPI_COMM_WORLD_RANK" >&2
+	else
+	    local log_file="selective-debug-rank$OMPI_COMM_WORLD_RANK.log"
+
+	    if [ "$log_quiet" -eq 1 ] ; then
+		debug_command="$debug_command &>> $log_file"
+	    else
+		debug_command="$debug_command 2>&1 | tee --append '$log_file'"
+	    fi
+	fi
+    fi 
+
     # DEBUG CODE:
     # echo "debug command:$debug_command" >&2
     
