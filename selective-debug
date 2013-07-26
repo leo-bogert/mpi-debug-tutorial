@@ -40,12 +40,12 @@ To make the macro available, add the following BEFORE your includes:
 #include "selective-debug.h"
 
 Additional options:
-- If you want to launch the debugger in a Xterm window, use the "--xterm" switch.
-- For using gdb as debugger (default), use the "--gdb" switch.
-- For using cgdb as debugger, use the "--cgdb" switch.
-- For using ltrace as debugger, use the "--ltrace" switch.
-- For using strace as debugger, use the "--strace" switch.
-- To terminate the parameter list, you can add "--" to the end of it. This is necessary if the command starts with "--".
+--cgdb     Use cgdb as debugger.
+--gdb      Use gdb as debugger (default).
+--ltrace   Use ltrace as debugger.
+--strace   Use strace as debugger.
+--xterm    Launch the debugger in a Xterm window.
+--         Terminate the parameter list. This is necessary if the command starts with "--".
 
 EOF
 }
