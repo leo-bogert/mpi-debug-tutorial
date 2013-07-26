@@ -58,6 +58,9 @@ Options:
 --xterm      Launch the debugger in a Xterm window.
 --           Terminate the parameter list. This is necessary if the command starts with "--".
 
+Environment variables:
+SELECTIVE_DEBUG__DEBUGGER_PARAMS: Use this to pass parameters to the debugger.
+
 EOF
 }
 
@@ -133,6 +136,10 @@ construct_attach_debugger_command() {
 
     if [ "$use_xterm" -eq 1 ] ; then
 	debug_command="xterm -e $debug_command"
+    fi
+
+    if ! [ -z "$SELECTIVE_DEBUG__DEBUGGER_PARAMS" ] ; then
+	debug_command="$debug_command $SELECTIVE_DEBUG__DEBUGGER_PARAMS"
     fi
 
     if [[ "$debugger" = *gdb ]] ; then
