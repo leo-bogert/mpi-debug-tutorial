@@ -14,5 +14,5 @@
 - Change #include "selective-debug.h" to #include <selective-debug.h> once we have deployed selective-debug. This needs to be done in debug-tutorial-2-*.c and in selective-gdb.
 	
 selective-debug:
-	- Deploy to Mogon using "environment-modules" Framework
+	- Deploy selective-debug and header to Mogon using "environment-modules" Framework?
 
