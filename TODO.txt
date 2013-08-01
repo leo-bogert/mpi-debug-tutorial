@@ -12,7 +12,18 @@
 	=> christoph martin, martin ät uni-mainz.de
 
 - Change #include "selective-debug.h" to #include <selective-debug.h> once we have deployed selective-debug. This needs to be done in debug-tutorial-2-*.c and in selective-gdb.
+
+- Contact Moritz Schlarb (should be listed at Mogon admins)
+	- Lessons as sections instead of tables. We need to be able to terminate sections for that:
+		https://www.dokuwiki.org/plugin:outdent
 	
+	- Show line numbers in code boxes:
+		https://www.dokuwiki.org/plugin:code2
+		
+	- Show diff-view in preview when editing?
+
+- Link the tutorial in the wiki main page at "Usage"
+
 selective-debug:
 	- Deploy selective-debug and header to Mogon using "environment-modules" Framework?
 
