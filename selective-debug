@@ -49,7 +49,7 @@ To make the macro available, add the following BEFORE your includes:
 Options:
 --cgdb       Use cgdb as debugger.
 --gdb        Use gdb as debugger (default).
---log        If you are using OpenMPI and want to clone the output of the debugger to a per-rank log file.
+--log        If you are using OpenMPI and want to clone the output of the debugger and your program to a per-rank log file.
              Filename will be "selective-debug-rankN.log". The file will be appended, not overwritten.
              The output will also go to the terminal so you can use --xterm.
 --log-quiet  Only log debugger output to files, do not show it on the terminal.
