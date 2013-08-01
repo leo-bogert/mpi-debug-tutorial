@@ -27,3 +27,6 @@
 selective-debug:
 	- Deploy selective-debug and header to Mogon using "environment-modules" Framework?
 
+	- VampirTrace? http://www.open-mpi.org/faq/?category=vampirtrace
+	
+	- Google more MPI tracing tools
