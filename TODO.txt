@@ -9,6 +9,7 @@
 - checkpointing
 
 - Deploy debug-tutorial to Git repository available on Mogon
+	=> christoph martin, martin ät uni-mainz.de
 
 - Change #include "selective-debug.h" to #include <selective-debug.h> once we have deployed selective-debug. This needs to be done in debug-tutorial-2-*.c and in selective-gdb.
 	
