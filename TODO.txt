@@ -1,7 +1,5 @@
 - Maybe get rid of telling people that they should use the long Queue for debugging. Short queue is OK as long as they specify the run time (I think the parameter was "-W").
 
-- Add screenshots of souce code to tutorial
-
 - Maybe say something about gdb command detach?
 
 - Explain that the developer should use binary search when he isn't certain about where the problem is
