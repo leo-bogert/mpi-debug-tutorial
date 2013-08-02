@@ -1,0 +1,284 @@
+====== selective-debug ======
+selective-debug is a tool for being able to attach a debugger automatically to some processes of a huge batch of processes which are run on the Mogon cluster.
+The program which should be debugged can decide on its own whether a particular process of it shall be attached by a debugger.
+Also, the debugger will be attached dynamically at runtime as soon as the process decides that it wants to be debugged.
+
+For questions, please contact:
+ --- //[[zdv@leo.bogert.de|Bogert, Leo]] 2013/07/23 23:54//
+
+===== Usage =====
+For a tutorial of how to use it, you should read the tutorial [[debug_tutorial|Debugging MPI programs at Mogon]].
+It was specifically designed for showing how to use selective-debug.
+
+===== Syntax =====
+For obtaining the syntax of selective-debug, execute it without any parameters.
+Here is a copy of the syntax at date of creation of this page:
+<code>
+Syntax: $0 [--cgdb|--ltrace|--strace] [--log] [--xterm] [--] command [argument*]
+
+This script will execute the given command with the given arguments.
+It will wait for the command to exit OR send SIGUSR1 to the script.
+If SIGUSR1 is sent, it will attach the selected debugger to the command interactively so you can debug.
+The default debugger is GDB.
+
+In C, to send SIGUSR1 to the script, use the macro BREAKPOINT_AND_SLEEP(10);
+Notice that this will send SIGUSR1 and then sleep for 10 seconds.
+The sleep(10) is necessary to give the debugger some time to attach itself.
+If you notice that after attaching you are not inside of sleep(), increase the delay.
+
+To make the macro available, add the following BEFORE your includes:
+#include "selective-debug.h"
+
+Options:
+--cgdb       Use cgdb as debugger.
+--gdb        Use gdb as debugger (default).
+--log        If you are using OpenMPI and want to clone the output of the debugger to a per-rank log file.
+             Filename will be "selective-debug-rankN.log". The file will be appended, not overwritten.
+             The output will also go to the terminal so you can use --xterm.
+--log-quiet  Only log debugger output to files, do not show it on the terminal.
+--ltrace     Use ltrace as debugger.
+--strace     Use strace as debugger.
+--xterm      Launch the debugger in a Xterm window.
+--           Terminate the parameter list. This is necessary if the command starts with "--".
+
+Environment variables:
+SELECTIVE_DEBUG__DEBUGGER_PARAMS: Use this to pass parameters to the debugger.
+</code>
+
+===== Download =====
+In case selective-debug is not available in your $PATH environment, you can view and download the current version here.
+For the download, click the header of the code box.
+
+**Please make sure to also download the selective-debug.h header at the bottom.**
+
+<file bash selective-debug>
+#!/bin/bash
+
+######################################################################
+# GLOBAL VARIABLES, filled by parse_parameters() and main()
+######################################################################
+# The program which we want to debug
+declare command
+
+# Array of the parameters with with the program shall be launched
+declare -a command_parameters
+
+# The process ID of the running command
+declare command_pid
+
+# The debugger to use.
+# May be one of cgdb, gdb, strace, ltrace.
+declare debugger='gdb'
+
+# When using OpenMPI, whether to create a log file "<rank of the process>.log>"
+# 1 for true, 0 for false
+declare log=0
+
+# When logging the debugger output to a file, do not show it on the terminal.
+declare log_quiet=0
+
+# Whether to wrap the debugger inside of an xterm.
+# 1 for true, 0 for false
+declare use_xterm=0
+#######################################################################
+
+
+print_syntax() {
+cat >&2 <<EOF
+Syntax: $0 [--cgdb|--ltrace|--strace] [--log] [--xterm] [--] command [argument*]
+
+This script will execute the given command with the given arguments.
+It will wait for the command to exit OR send SIGUSR1 to the script.
+If SIGUSR1 is sent, it will attach the selected debugger to the command interactively so you can debug.
+The default debugger is GDB.
+
+In C, to send SIGUSR1 to the script, use the macro BREAKPOINT_AND_SLEEP(10);
+Notice that this will send SIGUSR1 and then sleep for 10 seconds.
+The sleep(10) is necessary to give the debugger some time to attach itself.
+If you notice that after attaching you are not inside of sleep(), increase the delay.
+
+To make the macro available, add the following BEFORE your includes:
+#include "selective-debug.h"
+
+Options:
+--cgdb       Use cgdb as debugger.
+--gdb        Use gdb as debugger (default).
+--log        If you are using OpenMPI and want to clone the output of the debugger to a per-rank log file.
+             Filename will be "selective-debug-rankN.log". The file will be appended, not overwritten.
+             The output will also go to the terminal so you can use --xterm.
+--log-quiet  Only log debugger output to files, do not show it on the terminal.
+--ltrace     Use ltrace as debugger.
+--strace     Use strace as debugger.
+--xterm      Launch the debugger in a Xterm window.
+--           Terminate the parameter list. This is necessary if the command starts with "--".
+
+Environment variables:
+SELECTIVE_DEBUG__DEBUGGER_PARAMS: Use this to pass parameters to the debugger.
+
+EOF
+}
+
+# Returns EXIT_SUCCESS (= 0) if a process has been paused, EXIT_FAILURE otherwise.
+is_process_suspended() {
+    process_state="$(ps --pid "$1" --no-headers -o state)"
+
+    if [ "$process_state" = "T" ] ; then
+	return 0
+    else
+	return 1
+    fi
+}
+
+# Fills the global variables from the given parameter list.
+# Returns EXIT_SUCCESS (= 0) if the parsing was successful.
+# Returns EXIT_FAILURE (= 1) if the syntax is not followed. Use print_syntax then.
+parse_parameters() {
+    # Parse the parameter list
+    while [ "$#" -gt 0 ] && [[ "$1" = --* ]] ; do
+	local param="$1"
+	shift 1
+
+	case "$param" in
+	    --cgdb)
+		debugger='cgdb' ;;
+	    --gdb)
+		debugger='gdb' ;;
+	    --strace)
+		debugger='strace' ;;
+	    --log)
+		log=1 ;;
+	    --log-quiet)
+		log=1
+		log_quiet=1
+		;;
+	    --ltrace)
+	        debugger='ltrace' ;;
+	    --xterm)
+		use_xterm=1 ;;
+	    --)
+		break ;;
+	    *)
+	        # Unknown parameter, return EXIT_FAILURE
+		return 1
+		;;
+	esac
+    done
+
+    # Obtain the actual command.
+    if [ "$#" -lt 1 ] ; then
+	# Command is missing. Return EXIT_FAILURE
+        return 1
+    else
+	command="$1"
+	shift 1 # Remove the command from the parameter list
+    fi
+
+    # The remaining parameters are the parameters of the command. We copy them as an array to the global variable.
+    command_parameters=( "$@" )
+
+    # DEBUG CODE:
+    #echo "command:$command"
+    #echo "debugger:$debugger"
+    #echo "use_xterm:$use_xterm"
+    #for param in "${command_parameters[@]}" ; do
+    #	echo "param:$param"
+    #done
+}
+
+construct_attach_debugger_command() {
+    local debug_command="$debugger"
+
+    if [ "$use_xterm" -eq 1 ] ; then
+	debug_command="xterm -e $debug_command"
+    fi
+
+    if ! [ -z "$SELECTIVE_DEBUG__DEBUGGER_PARAMS" ] ; then
+	debug_command="$debug_command $SELECTIVE_DEBUG__DEBUGGER_PARAMS"
+    fi
+
+    if [[ "$debugger" = *gdb ]] ; then
+        # Notice:
+        #    The gdb manpage specifies that it wants the command name even when being given a PID.
+        #    This seems weird but it clearly states that it will attach to the existing PID instead
+        #    of executing the command again.
+	debug_command="$debug_command '$command' '$command_pid'"
+    else # strace / ltrace
+	debug_command="$debug_command -p '$command_pid'"
+    fi
+    
+    if [ "$log" -eq 1 ] ; then
+	if [ -z "$OMPI_COMM_WORLD_RANK" ] ; then
+	    echo "--log error: OpenMPI environment variable undefined: OMPI_COMM_WORLD_RANK" >&2
+	else
+	    local log_file="selective-debug-rank$OMPI_COMM_WORLD_RANK.log"
+
+	    if [ "$log_quiet" -eq 1 ] ; then
+		debug_command="$debug_command &>> $log_file"
+	    else
+		debug_command="$debug_command 2>&1 | tee --append '$log_file'"
+	    fi
+	fi
+    fi 
+
+    # DEBUG CODE:
+    # echo "debug command:$debug_command" >&2
+    
+    echo "$debug_command"
+}
+
+main() {
+    # Fills the global variables from the commandline.
+    if ! parse_parameters "$@" ; then
+	print_syntax
+	exit 1
+    fi
+
+    # Be careful to understand what the following line does:
+    # - It starts a subshell as a backround job
+    # - That subshell immediately suspends itself by sending SIGSTOP to itself.
+    #   (This means that execution of the subprocess is paused until it receives SIGCONT)
+    # - If we sent SIGCONT to the subshell in the future, it will use "exec" to execute the
+    #   actual command. Notice that exec replaces the whole process with the command instead
+    #   of starting a new one. This is needed so the PID stays the same and we can tell the
+    #   PID to GDB. Also, it is faster.
+    # Why do we do this? Imagine we started the actual command's execution immediately in background:
+    # It might happen that it sent the "debug me" signal to us before we could set up the trap on it.
+    # We cannot just set up the trap before the process is started because we need to know the PID
+    # for GDB.
+    ( kill -SIGSTOP "$BASHPID" ; exec "$command" "${command_parameters[@]}" ) &
+    command_pid="$!"
+
+    # Trap signal SIGUSR1. Upon receiving it, execute the command to attach the debugger.
+    trap "$(construct_attach_debugger_command)" SIGUSR1
+
+    # Now that we have trapped SIGUSR1, the subshell can continue execution to run the main command
+    # But first, we must avoid a race condition: It might take some time for the subshell to send
+    # suspend itself. So we cannot immediately send SIGCONT for it, we first must check whether
+    # the process is actually suspended
+    while ! is_process_suspended "$command_pid" ; do
+	sleep 0.1
+    done
+
+    # Resume the subshell to run the command
+    kill -SIGCONT "$command_pid"
+
+    # Wait for the command to exit
+    wait
+}
+
+main "$@"
+</file>
+
+<file C selective-debug.h>
+#ifndef SELECTIVE_DEBUG_H_INCLUDED
+#define SELECTIVE_DEBUG_H_INCLUDED
+
+#define _POSIX_SOURCE // for kill()
+#include <sys/types.h> // for getppid(), kill()
+#include <signal.h> // for kill()
+#include <unistd.h> // for getppid()
+
+#define BREAKPOINT_AND_SLEEP(x) { kill(getppid(), SIGUSR1); sleep(x); }
+
+#endif
+</file>
