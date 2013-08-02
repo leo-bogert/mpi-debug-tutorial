@@ -1,0 +1,597 @@
+====== Tutorial: Debugging MPI programs at Mogon ======
+===== Summary =====
+We show a method of attaching a debugger on the fly by request of your application.\\
+With the shown method your application can determine on its own which nodes need to be debugged and request attachment of the debugger only on those nodes.\\
+This allows you to debug while running on an amount of nodes which would be too large to attach the debugger to every single node.\\
+
+The primary debugger which this tutorial explains is GDB.\\
+At the end of the tutorial, you will be shown how to use various other debuggers with the same technique: cgdb, ltrace and strace.\\
+Notably, ltrace and strace support profiling the execution time of your program - you can use them for performance optimization.
+
+For questions, please contact:
+
+ --- //[[zdv@leo.bogert.de|Bogert, Leo]] 2013/07/20 23:11//
+
+ --- //[[t.suess@uni-mainz.de|Süß, Tim]] (not a signature) //
+
+===== Setup =====
+==== Understanding & compiling the sample program ====
+The tutorial is based on a sample program. This section shows how to obtain it, explains what it does, and tells you how to compile it.
+
+First of all, we download the source code. Notice that lines starting with “#” are comments and do not need to be executed.
+<code bash>
+ssh mogon.zdv.uni-mainz.de
+
+# Download the source code
+git clone https://github.com/leo-bogert/mpi-debug-tutorial.git
+
+# Change to the directory which contains it
+cd mpi-debug-tutorial
+</code>
+
+Let's have a look at what it does - the source code is below but you can also open “debug-tutorial-1-bugged.c” with your favorite text editor:
+
+<code bash>
+emacs debug-tutorial-1-bugged.c
+</code>
+
+Here's the content of that file:
+<file c debug-tutorial-1-bugged.c>
+#include <mpi.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <time.h>
+
+#define items (1024*1024)
+int array[items]; // Goal of the program: Summing up this array. (Instead use allocated memory in real programs!)
+long sum = 0; // The result of the computation
+
+long sum__sequential_reference_implementation() { // Non-parallel reference implementation
+  long s = 0;
+  for(int item = 0; item < items; ++item)
+    s += array[item];
+  return s;
+}
+
+int main(int argc, char** argv) {
+  MPI_Init(&argc, &argv);
+
+  int my_rank; // Number of the node
+  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+  int node_count; // Total number of nodes
+  MPI_Comm_size(MPI_COMM_WORLD, &node_count);
+  
+  // The root must load the input data to distribute to the other nodes
+  if(my_rank == 0) {
+    // In our case it generates a random array as input data
+    srand(time(NULL));
+    for(int item = 0; item < items; ++item)
+      array[item] = rand();
+  }
+  
+  int items_per_rank = items / node_count;
+  int remainder_items = items % node_count;
+  int* my_work;
+  MPI_Alloc_mem(items_per_rank * sizeof(int), MPI_INFO_NULL, &my_work);
+ 
+  // MPI_Scatter is a collective operation which distributes an equal-sized part of the given array to each node.
+  MPI_Scatter(&array[remainder_items] /* send buffer */, items_per_rank /* send count per node */, MPI_INT /* send type */,
+	      my_work /* receive buffer on each node */, items_per_rank /* receive count */ , MPI_INT /* receive type */, 
+	      0 /* send buffer is stored on this rank */, MPI_COMM_WORLD /* communication channel */);
+ 
+  // This is the actual working-loop
+  long sub_sum = 0;
+  for(int i=0; i < items_per_rank; i++)
+    sub_sum += my_work[i];
+
+  if(my_rank == 0) { // Scatter cannot deal with a division remainder so we manually deal with it
+    while(remainder_items > 0)
+      sub_sum += array[remainder_items--];
+  }
+
+  MPI_Free_mem(my_work);
+
+  // MPI_Reduce with op-code MPI_SUM is a collective operation which sums up the input sub_sum of each node
+  // into single a resulting output sum on the master.
+  MPI_Reduce(&sub_sum /* input to sum up */, &sum /* output */, 1 /* input count */, MPI_LONG /* input type */,
+	     MPI_SUM /* operation */, 0 /* output is stored on this rank */, MPI_COMM_WORLD /* communication channel */);
+ 
+  if(my_rank == 0) {
+    // The result of the computation now is available on rank 0.
+    // We compare it with the sequential reference implementation to test our parallel implementation.
+    if(sum == sum__sequential_reference_implementation())
+      fprintf(stderr, "Test OK.\n");
+    else
+      fprintf(stderr, "Test FAILED!\n");
+  }
+
+  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Finalize();
+  return EXIT_SUCCESS;
+}
+</file>
+The goal of the program is to add up a large array of numbers. This is very easy to parallelize:
+
+Let N be the number of elements in the array. Let P be the amount of workers. Then we do the following:
+  - We split up the array to P chunks of equal size N/P and distribute a chunk to each worker.
+  - Each worker then adds up the N/P elements in its chunk.
+  - After that is done, we only have to add up the P chunk sums to obtain the result.
+
+Luckily, MPI even provides two collective operations which can do steps 1 and 3 for us. “Collective” means that we call the operations on all nodes and they yield a different result on each node:
+  * The splitting of the array into chunks is done by //MPI_Scatter//. It yields the chunk of the node which executes it as a result.
+  * The addition of the chunk sub-sums is done by //MPI_Reduce//. It yields the sum of all sub sums on the root node (rank = 0).
+See the source code for how they are used. Also notice that they are most likely implemented with efficient parallelization as well. Therefore, it is a good idea to use those collective operations instead of manually distributing the chunks and adding up the sub sums.
+
+==== Preparing for debugging ====
+This section will show you how to provoke bugs in your programs. After that, you will be given an example of how to isolate the bugs to a small region in the program - it reduces debugging time to get a rough idea of where the bug might be before using the debugger.
+
+First of all, we schedule the program for execution as a batch job on Mogon:
+<code bash>
+# Make the libraries available which are needed for compilation and execution
+module purge ; module add gcc/4.7.0 && module add mpi/openmpi/1.6.1/gcc_4.7.0
+
+# Compile the source code with the following parameters:
+# - Compile according to C99 standard for the C language (-std=c99).
+#   Since C has been around for decades there are many dialects and you
+#   should decide which one you are using.
+# - Output filename is “debug-tutorial” (-o debug-tutorial)
+mpicc debug-tutorial-1-bugged.c -std=c99 -o debug-tutorial
+
+# Queue the job for execution with the following parameters:
+# - Interactive mode (-I): Output and input are attached to the terminal
+#   instead of being sent out by mail. This is necessary for being able to
+#   run GDB on a terminal.
+# - Use 2 processes (-n 2). The fewer you chose the less you have to wait.
+# - Run each process on a different computer (-R 'span[ptile=1]'). 
+#   This introduces latency which is good for provoking errors in parallel
+#   programs.
+# - Use the queue for short jobs (- q short). This should reduce your wait
+#   time. ONLY USE THIS QUEUE IF YOUR JOB IS REALLY SHORT!
+# - (The “-a openmpi” is glue code to run MPI apps through bsub)
+# - “mpirun ./debug-tutorial” is the actual command being executed as each process.
+bsub -I -n 2 -R 'span[ptile=1]' -q short -a openmpi mpirun ./debug-tutorial
+</code>
+We especially want you to notice the parameter **-R 'span[ptile=1]'** as your first lesson:
+
+^ Lesson 1  ^
+| You should ensure that your program works both when all processes are run on a single multi-processor machine and on different machines across the network. You can force LSF to put each process on a different machine with **-R 'span[ptile=1]'**. The latencies caused by the network connections can trigger synchronization issues in your program. \\ Notice that you should not enforce this parameter in productive use: The more restrictions you put onto selection of the machines to run your program on, the longer your queue time. Also, performance decreases very much when processes have to be connected over the network. |
+
+The output of the program you should get is:
+<code>
+Job <12859536> is submitted to queue <short>.
+<<Waiting for dispatch ...>>
+<<Starting on a0475>>
+Test OK.
+</code>
+
+The self test of the program has succeeded: It has compared the result of the parallel computation to a sequential reference implementation.\\
+Notice that this shows you:
+
+^ Lesson 2 ^
+| When parallelizing a problem which is solvable in a sequential (= non-parallel) manner by nature, you should always write a sequential reference implementation of your algorithm and compare its results with the results of the parallel algorithm.\\ Parallelization of a “sequential problem” is often difficult so the sequential implementation is less likely to have bugs.\\ Also, two implementations are less likely to yield the same erroneous results than one. |
+
+Now that we have observed that the program works, we would put real work onto it. In practice this would mean that we would increase the problem size and increase the node count to get more performance. Also, we use the “long” queue now as we are  consuming more resources.\\
+So lets increase the node count for a start:
+<code bash>
+bsub -I -n 10 -R 'span[ptile=1]' -q long -a openmpi mpirun ./debug-tutorial
+	Job <12871894> is submitted to queue <short>.
+	<<Waiting for dispatch ...>>
+	<<Starting on a0243>>
+	Test FAILED!
+</code>
+As we have caused the program to fail now, we notice...
+
+^ Lesson 3 ^
+| You should always test your program with different node counts to provoke problems in the division of labor. |
+
+Because we don't spot a pattern between the node count at which it fails and the problem size, we now use the ability of the Linux shell to enter loops:
+<code bash>
+for ((i=0; i < 20; i++)) ; do bsub -n "$i" -R 'span[ptile=1]' -q long -a openmpi mpirun ./debug-tutorial ; done
+</code>
+
+This will queue 20 jobs with node counts from 1 to 20.\\
+Notice the necessary changes in bsub parameters:
+  * We got rid of the interactive execution: Running many jobs will take a long time which we don't want to watch the terminal for. We will be notified about the results by E-Mail now.
+  * We changed the queue from short to long: Even though each job is short, we enqueue a large amount of them. We should not block the short queue for a long time, there are other users at Mogon as well.
+
+^ Lesson 4 ^
+| If you do not spot a pattern between the appearance of bugs and the node count, try  large amounts of different node counts using the shell. |
+
+Now lets look at the results we received by mail:
+<code>
+ 1 node  : Test OK.
+ 2 nodes : Test OK.
+ 3 nodes : Test FAILED!
+ 4 nodes : Test OK.
+ 5 nodes : Test FAILED!
+ 6 nodes : Test FAILED!
+ 7 nodes : Test FAILED!
+ 8 nodes : Test OK.
+ 9 nodes : Test FAILED!
+10 nodes : Test FAILED!
+11 nodes : Test FAILED!
+12 nodes : Test FAILED!
+13 nodes : Test FAILED!
+14 nodes : Test FAILED!
+15 nodes : Test FAILED!
+16 nodes : Test OK.
+17 nodes : Test FAILED!
+18 nodes : Test FAILED!
+19 nodes : Test FAILED!
+20 nodes : Test FAILED!
+</code>
+What do 1, 2, 4, 8 and 16 have in common? - They are the 2<sup>x</sup> series!\\
+If you look at the **#define items (1024*1024)** you will notice that 1024 is 2<sup>10</sup>.\\
+So the program fails if N mod P != 0.\\
+And in fact the program itself has a modulo operation in line 35: MPI_Scatter is only able to distribute an equal amount of elements to each node so the said line computes the division remainder of N/P. The remaining items are processed in lines 49 and following. If there are no remaining items, i.e. when N mod P == 0, those lines are not executed. So the bug must be in the loop inside of the if-condition at line 35.
+
+We learn the following from this:
+^ Lesson 5 ^
+| Once you have run tests for a large different amount of node counts, and you notice that they succeed for some of them, try to spot a pattern between the node count and boundary conditions of your program. Boundary conditions are likely to induce problems. |
+
+Before we fulfill our promise to actually teach you something about using a debugger, we note that we have managed to reduce the line count where we suspect the problem to be to 2 **without** using a debugger. This gives you:
+
+^ Lesson 6 ^
+| A debugger is not a replacement for using your brain first to isolate the issue to a certain region in your program. However, please do not waste too much time trying find the issue without debugging tools just for sake of polishing your pride. Many issues are very easy to locate with a debugger even without thinking at all why they might be happening. |
+
+===== Debugger: GDB =====
+One of the most well-known and powerful debuggers in the Unix world is GDB. It has been in development since 1986. You should definitely give it a chance.
+
+^ Lesson 7 ^
+| For allowing GDB to navigate in the binary version of your program, you should compile it with debugging information included by adding the “-ggdb” switch to the compiler:\\ \\ <code>mpicc debug-tutorial-1-bugged.c -std=c99 -ggdb -o debug-tutorial</code> |
+
+How does one attach GDB to a process now?\\
+There are two options which GDB offers in general, i.e. not specifically for MPI:
+  * Letting GDB start the process so it can attach itself immediately.
+  * Attaching to an existing process by its process ID (PID).
+
+Unfortunately, when working with distributed computing, this is not sufficient:
+  * Letting GDB start the processes would result in having a single GDB instance running for every process on every node. When using interactive mode with LSF (“-I”), we only get a single terminal. As GDB is a program which is used by terminal commands, every GDB command you enter into the terminal would be executed by //every// instance of GDB.\\ Further, it probably does not make sense to run GDB attached to every MPI process anyway: As our tutorial shows, problems often appear on a single node and we want to debug a single process at once therefore.
+  * Attaching to an existing process would require that we run GDB on the same machine as the process is running on. It is acceptable to connect to a certain machine of Mogon via SSH as long as you ask the admin first. But having to connect to the affected machine first is quite annoying.
+
+To make attaching GDB to a certain process easy, we developed a wrapper script called “[[selective-debug]]”.\\
+“Wrapper” means that you put the script into the bsub command line as the executable to launch and add the actual program as parameter to it:
+<code>
+bsub -I -n 10 -q short -a openmpi mpirun ./selective-debug ./debug-tutorial
+</code>
+
+What the “[[selective-debug]]” script will do now on every node is the following:
+  * It will launch your actual command.
+  * It will wait for your program to send the POSIX signal SIGUSR1 to it. As soon as SIGUSR1 is received, it will attach GDB to the process which sent SIGUSR1. The attachment of GDB will halt your program so you can debug it.
+
+[[Selective-debug]] does provide a header file with a macro to do the job of sending SIGUSR1.\\
+You can now debug a single rank by modifying your program like this:
+<code c>
+// This must be added to the start of your #includes.
+// It might not work if you have other includes first!
+#include “selective-debug.h”
+
+if(my_rank == <rank on which the problem exists>) {
+	BREAKPOINT_AND_SLEEP(10);
+}
+</code>
+The macro is called "BREAKPOINT..." because "setting a breakpoint" is the technical term for telling a debugger to halt the program at a certain point - the breakpoint.
+
+The macro is called "..._AND_SLEEP" because after sending the breakpoint signal, it will do a call "sleep(10);" which causes the program to do nothing for 10 seconds.\\
+- It takes some time for gdb to start up and halt the program. If the program does not sleep for long enough, the debugger will halt it beyond the desired breakpoint. If you notice that this happens, please increase the sleep delay. You can tell that it happened from "bt" (explanation will follow) showing the wrong point of execution. It is also possible that your program has exited already, which the debugger will tell you with "No such process.".\\
+Also please do not just enter a very large value for the delay: When you are in the  debugger and want to step through the program, you will have to wait for the whole delay to expire first!
+
+Please remember the “if()” in the above sample code: You must only send the breakpoint signal on a single rank. Otherwise you will get multiple instances of GDB attached to a single terminal - this would not work properly.
+
+^ Lesson 8 ^
+| To attach GDB on a certain rank, prefix the command with the “[[selective-debug]]” wrapper and modify your program to use the **BREAKPOINT_AND_SLEEP()** macro to halt where appropriate. |
+
+Now what about our tutorial program?\\
+The erroneous code in line 49 only gets executed on the node with rank 0 so it is safe to execute the “Attach GDB” signal in line 50.\\
+The amended code would look like this:
+<code c>
+if(my_rank == 0) { // Scatter cannot deal with a division remainder so we manually deal with it                                                                    
+  BREAKPOINT_AND_SLEEP(10);
+
+  while(remainder_items > 0) {
+    int index = remainder_items--;
+    sub_sum += array[index];
+  }
+}
+</code>
+
+You should notice that we have separated the index of the array access to a variable: Index computations very often go wrong so we should look at the actual index which is being used.
+
+We have provided a file [[https://github.com/leo-bogert/mpi-debug-tutorial/blob/master/debug-tutorial-2-breakpoint.c|debug-tutorial-2-breakpoint.c]] which contains these modifications. We recompile and execute it:
+<code bash>
+mpicc debug-tutorial-2-breakpoint.c -std=c99 -ggdb -o debug-tutorial
+bsub -I -n 10 -q short -a openmpi mpirun ./selective-debug ./debug-tutorial
+</code>
+
+After your job has been started a GDB prompt should appear:
+<code>
+(gdb) 
+</code>
+The process with rank 0 is halted now and you can debug it.\\
+To see where the execution was halted, enter “bt” (backtrace). The result should be similar to:
+<code>
+(gdb) bt
+#0  0x00002acb77d543bd in nanosleep () from /lib64/libc.so.6
+#1  0x00002acb77d54230 in sleep () from /lib64/libc.so.6
+#2  0x00000000004010ce in main (argc=1, argv=0x7fffeb0c3fd8) at debug-tutorial-2-breakpoint.c:55
+</code>
+
+This means that line 56 of your //main()// function has executed a function called //sleep()// and that function has executed a function called //nanosleep()// and the processing was halted in that //nanosleep(//) function.\\
+We now want to continue execution in //main()// by single stepping through it.\\
+To do that, first we must get out of //nanosleep()// and //sleep()// using the “finish” command:
+<code>
+(gdb) finish
+Run till exit from #0  0x00002aaf645243bd in nanosleep () from /lib64/libc.so.6
+0x00002aaf64524230 in sleep () from /lib64/libc.so.6
+(gdb) 
+Run till exit from #0  0x00002aaf64524230 in sleep () from /lib64/libc.so.6
+main (argc=1, argv=0x7fff14e21318) at debug-tutorial-2-breakpoint.c:55
+57          while(remainder_items > 0) {
+</code>
+
+Notice that we pressed ENTER the second time instead of entering the finish command again: Pressing ENTER will execute the previous command once more.
+
+Now we step into the “while(remainder_items > 0) {“ loop:
+<code>
+(gdb) step
+58            int index = remainder_items--;
+</code>
+
+Notice that what is displayed has NOT been executed yet, it is the next instruction which the processor will execute. We want to remember the value of the “remainder_items” variable from which we compute the “index” variable so we look it up:
+<code>
+(gdb) print remainder_items
+$1 = 6
+</code>
+
+This means that the //remainder_items// variable has a value of 6.
+
+We now step over the current line so the result of the //index// variable is computed and look it up:
+<code>
+(gdb) step
+59            sub_sum += array[index];
+(gdb) print index
+$2 = 6
+</code>
+
+We now want to think about whether this //index// is valid. Of course we have not memorized the full source code so we just use GDB to show us some of it:
+<code>
+(gdb) bt 
+#0  main (argc=1, argv=0x7fff54ca4ca8) at debug-tutorial-2-breakpoint.c:59
+(gdb) list 39,59
+</code>
+
+What we did here is that we first looked up which line the execution is halted at using “bt”. Then we used list to show lines the lines before that - from 39 to 59. Notice that you could as well just have shown some lines before the current location using “list” without parameters, but it might not show enough of them. To find out about more ways of specifying positions, use “help list”.
+
+Lets find the problem in our program now:
+<code>
+(gdb) list 39,59
+39        int items_per_rank = items / node_count;
+40        int remainder_items = items % node_count;
+41        int* my_work;
+...
+54        if(my_rank == 0) { // Scatter cannot deal with a division remainder 						so we manually deal with it
+55          BREAKPOINT_AND_SLEEP(10);
+56          
+57          while(remainder_items > 0) {
+58            int index = remainder_items--;
+59            sub_sum += array[index];
+</code>
+
+We stepped into the first execution of the while loop at line 57.\\
+Whats the goal of that loop? Scatter will distribute an equal amount of items of the work to each node. Because the size of the array is not divisible by the amount of nodes, an amount of N mod P items remains. The value N mod P has been computed at line 40 and stored in the variable //remainder_items//.\\
+The loop at line 57 which we step through shall process those //remainder_items// at the start of the work array((Notice that this is a poor algorithm: At the worst case, the amount of //remainder_items// will be as large as the size of all other work units minus one item. This means that when all nodes but the first one have finished computing already, the first node will continue computation for almost as long as it took the other nodes to finish.)).
+
+At the first execution of the loop, we have observed //remainder_items// == 6 and //index// == 6. We now want to know what happens in the last iteration of the loop: Problems are likely to occur at boundary conditions, the middle of the loop is not very interesting.\\
+To quickly reach the end of the loop, we tell GDB to halt on "//remainder_items// == 1", which is the last value which satisfies the loop-condition:
+<code>
+(gdb) watch remainder_items if remainder_items==1
+Hardware watchpoint 1: remainder_items
+(gdb) c
+Continuing.
+Hardware watchpoint 1: remainder_items
+
+Old value = 2
+New value = 1
+main (argc=1, argv=0x7fff973b3c98) at debug-tutorial-2-breakpoint.c:59
+59            sub_sum += array[index];
+</code>
+
+This has stopped inside of previous-to-last execution of the //while()// now because //remainder_items// is updated inside of it. We "step" some more to reach the last iteration and get the index which is used in the last iteration:
+<code>
+(gdb) step
+57          while(remainder_items > 0) {
+(gdb) 
+58            int index = remainder_items--;
+(gdb) 
+59            sub_sum += array[index];
+(gdb) print index
+$3 = 1
+</code>
+
+Lets summarize what we have observed with GDB now:
+  * Before the first iteration of the loop, //remainder_items// was 6. The goal of the loop therefore was to process the first 6 items of the work array.
+  * At the first iteration, //index// was 6, i.e. the first iteration processed slot 6 of the array.
+  * At the last iteration, //index// was 1, i.e. the last iteration processed slot 1 of the array.
+
+This shows that the bug is a classical off-by-one issue: C arrays start at index 0, not at index 1!\\
+How do we fix this?
+
+In the bugged code, we obtain the index by doing
+<code c>remainder_items--</code>
+This is the so-called "post-decrement" operator: It returns the current value of the variable and decrements the variable **after having returned the old value**. If you want to obtain the decremented value, you have to use the "pre-decrement" operator:
+<code c>--remainder_items</code>
+This will decrement the variable and return the decremented value.
+
+So the bugfixed code would look like this:
+<code c>
+if(my_rank == 0) { // Scatter cannot deal with a division remainder so we manually deal with it                                                                    
+  while(remainder_items > 0)
+    sub_sum += array[--remainder_items];
+}
+</code>
+We have provided a file [[https://github.com/leo-bogert/mpi-debug-tutorial/blob/master/debug-tutorial-3-fixed.c|debug-tutorial-3-fixed.c]] which contains this fix.
+
+Compiling and executing it with the originally failing parameters should show the output:
+<code bash>
+mpicc debug-tutorial-3-fixed.c -std=c99 -o debug-tutorial
+bsub -I -n 10 -R 'span[ptile=1]' -q long -a openmpi mpirun ./debug-tutorial
+	Job <14863096> is submitted to queue <long>.
+	<<Waiting for dispatch ...>>
+	<<Starting on a0324>>
+	Test OK.
+</code>
+
+The self-test which compares the result of the parallel computation to the sequential reference implementation has succeeded now!
+
+Notice that up to now we have only tested a single node count which had failed previously. In practice, you should as well repeat the shell for-loop which tries your program with a large amount of different node counts.
+
+Before you would move on to productive use, you should always remember the following lesson:
+
+^ Lesson 9 ^
+|Don't forget to remove all debug tools before running your software productively as they might have a huge impact on performance:\\ - Remove the “-ggdb” switch of the compiler\\ - Remove “./selective-debug” from the command line\\ - Disable the execution of the self-test.\\ Also, make sure to test your bugfix as well as you have tested the bugged version.|
+
+===== Debugging multiple nodes at once =====
+The technique we have shown you using the [[selective-debug]] wrapper has one disadvantage: It only allows you to debug a single node at once because it is attached to the single terminal which was used to execute //bsub//.
+
+To debug multiple processes at once, [[selective-debug]] does offer you an **- - xterm** switch: It will make it launch GDB inside of a new graphical terminal window using the X-Server on your client.\\ 
+This will allow your program to tell [[selective-debug]] to launch GDB on multiple nodes:\\
+Each instance of GDB will have its own Xterm terminal window.
+
+For allowing the processes on Mogon to connect to your X-Server, you have to use the **-Y** option of SSH.
+
+^ Lesson 10 ^
+| To use multiple instances of GDB, forward the connection to your X-Server via SSH and use the **- - xterm** switch of [[selective-debug]]:\\ \\ <code>
+ssh -Y mogon.zdv.uni-mainz.de
+bsub […] ./selective-debug --xterm ./debug-tutorial</code>Your program then is allowed to send the debug signal to [[selective-debug]] on multiple nodes for being able to run multiple instances of GDB. |
+
+===== Debugger: CGDB =====
+CGDB is basically a wrapper around GDB. It amends GDB with a terminal-graphics interface.\\
+This interface splits the terminal in a top and bottom half:
+  * The top always shows the source code of your program at the current point of execution.
+  * The bottom shows the GDB command prompt.
+Having a large area of the source code always visible obviously is a huge advantage.
+
+^ Lesson 11 ^
+| To use CGDB you will need to do two modifications to your debugging setup:\\ - Make [[selective-debug]] launch Xterms for debugging as described in the [[debug_tutorial#Debugging multiple nodes at once|previous section]]((This is needed because the standard SSH terminal does not provide sufficient functionality for the ncurses terminal-graphics interface of CGDB.)).\\ - Use the **- - cgdb** switch of [[selective-debug]]:\\ \\ <code bash>
+ssh -Y mogon.zdv.uni-mainz.de
+bsub […] ./selective-debug --xterm --cgdb ./debug-tutorial</code> |
+
+===== Debugger: ltrace =====
+ltrace means "library trace". It will show a timeline (trace) of all calls to library functions which your program does.\\
+The "functions" in "library functions" refers to normal C functions.\\
+The "library" referes to all functions which are **not** implemented in the source code your program.
+
+In other words it will trace any functions which you //#include// from things such as:
+  * The [[http://en.wikipedia.org/wiki/C_standard_library|standard C library]] - it provides stuff such as //printf()//.
+  * The MPI library - **MPI functions are also library calls!**
+
+With the ability to show a trace of calls to MPI functions, we can get a very useful timeline of our programs execution.
+
+Another notable difference between ltrace and GDB you need to know is that ltrace is not an //interactive// debugger:
+  * It will not halt the execution of your program.
+  * You cannot enter any commands while it is running. All of its behavior is determined by its parameters. They can be passed to ltrace with the environment variable <nowiki>SELECTIVE_DEBUG__DEBUGGER_PARAMS</nowiki>. We will show you how to do that later.
+
+^ Lesson 12 ^
+| To use ltrace, use the **- - ltrace** switch of [[selective-debug]]:\\ \\ <code bash>
+bsub […] ./selective-debug --ltrace ./debug-tutorial</code> |
+
+==== Ltrace example ====
+As with GDB, we amend our code with a //BREAKPOINT_AND_SLEEP(10)// which is executed only on one rank:
+<code c>
+if(my_rank == 0)
+  BREAKPOINT_AND_SLEEP(10);
+</code>
+
+We have provided a file [[https://github.com/leo-bogert/mpi-debug-tutorial/blob/master/debug-tutorial-4-ltrace.c|debug-tutorial-4-ltrace.c]] which contains this modification. 
+Notice that we have added the breakpoint close to the beginning of the program so we can see what a rather complete trace looks like.
+
+We compile the file **without** the **-g** switch which would include debug infomation: Ltrace does not need debug information!\\
+This provides the advantage that you can use it upon programs of which you do not have the source code available.
+<code bash>
+mpicc debug-tutorial-4-ltrace.c -std=c99 -o debug-tutorial
+</code>
+
+We execute [[selective-debug]] with the ltrace parameter:
+<code bash>
+bsub -I -n 10 -q short -a openmpi mpirun ./selective-debug --ltrace ./debug-tutorial
+</code>
+
+The output will look similar to:
+<code>
+Job <23906720> is submitted to queue <short>.
+<<Waiting for dispatch ...>>
+<<Starting on a0398>>
+[pid 63586] MPI_Alloc_mem(419428, 0x601660, 0x7ffff5a76900, 10, 0x7ffff5a766f0) = 0
+[pid 63586] MPI_Scatter(0x6027b8, 104857, 0x601760, 0x2ad2c1e46000, 104857) = 0
+[pid 63586] MPI_Free_mem(0x2ad2c1e46000, 0xffff8002, 0x2e717f67, 0x2ad2bb53e8b8, 0x1d2b0c0) = 0
+[pid 63586] MPI_Reduce(0x7ffff5a768f8, 0x602790, 1, 0x602580, 0x601d60) = 0
+[pid 63586] fwrite("Test FAILED!\n", 1, 13, 0x2ad2b7995860Test FAILED!
+) = 13
+[pid 63586] MPI_Barrier(0x601960, 0x401200, 13, -1, 0x4012a6) = 0
+[pid 63586] MPI_Finalize(0x7ffff5a767f8, 0xffff8002, 18, 0, 0x1d2a2e0 <unfinished ...>
+</code>
+
+==== Ltrace parameters: Profiling execution time ====
+A very powerful feature of ltrace is the ability to measure how much execution time your program has spent in certain functions.\\
+You can do this with the **-c** parameter of ltrace.
+
+But since ltrace is executed indirectly via [[selective-debug]], we need to use its facility of passing parameters through to the debugger.\\
+This can be done with the environment variable <nowiki>SELECTIVE_DEBUG__DEBUGGER_PARAMS</nowiki>. To pass an environment variable to a command which you execute in the shell, you put the assignment to the variable before the command:
+<code bash>
+SELECTIVE_DEBUG__DEBUGGER_PARAMS='-c' bsub -I -n 10 -q short -a openmpi mpirun ./selective-debug --ltrace ./debug-tutorial
+</code>
+Please notice that we put the assignment of the variable at the very beginning of the command line, not before the "./selective-debug": It needs to be before the command which we tell the shell, and to the shell the "bsub" is the command and everything which follows are parameters, not commands.
+
+You will get an output similar to:
+<code>
+% time     seconds  usecs/call     calls      function
+------ ----------- ----------- --------- --------------------
+ 96.12    2.050929     2050929         1 MPI_Finalize
+  1.07    0.022868       22868         1 MPI_Scatter
+  0.83    0.017779       17779         1 MPI_Free_mem
+  0.52    0.011048       11048         1 MPI_Alloc_mem
+  0.51    0.010905         170        64 
+  0.49    0.010353       10353         1 MPI_Barrier
+  0.27    0.005779        5779         1 MPI_Reduce
+  0.19    0.003998        3998         1 fwrite
+------ ----------- ----------- --------- --------------------
+100.00    2.133659                    71 total
+</code>
+
+===== Debugger: strace =====
+strace means "system trace". It is very similar to ltrace which we explained in the [[debug_tutorial#Debugger: ltrace|previous section]]:\\
+It traces calls to system functions.
+[[http://en.wikipedia.org/wiki/System_call|System functions]] are functions which are implemented in the Linux kernel, as opposed to library functions which are implemented in [[http://en.wikipedia.org/wiki/User_space|user space]]. They are typically basic low level functions such as file access, multithreading and networking.
+
+^ Lesson 13 ^
+| To use strace, use the **- - strace** switch of [[selective-debug]]:\\ \\ <code bash>
+bsub […] ./selective-debug --strace ./debug-tutorial</code> |
+
+What you have learned about ltrace also applies to strace. Therefore, please make sure to read the [[debug_tutorial#Debugger: ltrace|ltrace section]] in depth.
+===== Logging debugger output with selective-debug =====
+As you have seen, ltrace and strace are non-interactive debuggers. Such debuggers usually produce a large amount of output which is difficult to follow live.\\
+Therefore, we now show you how to use [[selective-debug]] to log the output of the debugger to one file per reach OpenMPI rank.
+
+^ Lesson 14 ^
+| There are two switches of [[selective-debug]] which can be used to control logging:\\ \\ <code>
+--log        If you are using OpenMPI and want to clone the output of the debugger to a per-rank log file.
+             Filename will be "selective-debug-rankN.log". The file will be appended, not overwritten.
+             The output will also go to the terminal so you can use --xterm.
+
+--log-quiet  Only log debugger output to files, do not show it on the terminal.
+</code> |
+
+The possibilities offered by those switches will be explained in the following sections:
+==== Logging on all ranks ====
+They allow you to use [[debug_tutorial#Debugger: ltrace|ltrace]] or [[debug_tutorial#Debugger: strace|strace]] parallely on **all ranks** because each rank gets a separate log file.\\ For doing this, just call //BREAKPOINT_AND_SLEEP()// on every rank.
+
+==== Separate program and debugger output ====
+If your program produces output on the terminal, it would damage the output of the debugger as it would appear randomly in between it. The **- - log-quiet** switch is suitable for fixing this. Your program will get the terminl for output and the debugger will get the log files.
+
+==== Non-interactive debugging ====
+Using the **- - log-quiet** switch, you can run the batch job **non-interactively**, i.e. remove the **-I** switch of bsub: You will get the output of your program per E-Mail and the output of the debugger will exist in the files created on disk.
+===== Other debuggers =====
+We designed [[selective-debug]] which allows easy addition of new debuggers.\\
+If you want support for another debugger to be added, feel free to contact  [[zdv@leo.bogert.de|Leo Bogert]].
+ 
